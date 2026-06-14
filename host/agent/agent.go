@@ -56,7 +56,7 @@ func main() {
 		log.Fatal("failed to find map tcp_connection_config")
 	}
 
-	var key uint32 = 0
+	var key uint32
 
 	if err := configMap.Put(key, port); err != nil {
 		log.Fatalf("failed to update tcp_connection_config: %v", err)
@@ -99,6 +99,16 @@ func main() {
 
 	fmt.Printf("Started on port %d\n", port)
 
+	if err := connectToAnalyzer(); err != nil {
+		log.Printf("failed to connect to analyzer: %v", err)
+	}
+
+	defer func() {
+		if analyzerConn != nil {
+			analyzerConn.Close()
+		}
+	}()
+
 	for {
 		record, err := reader.Read()
 		if err != nil {
@@ -139,6 +149,10 @@ func handleEvent(data []byte) error {
 		dstIP,
 		event.Dport,
 	)
+
+	if err := sendTCPEventToAnalyzer(&event); err != nil {
+		log.Printf("failed to send event to analyzer: %v", err)
+	}
 
 	return nil
 }
