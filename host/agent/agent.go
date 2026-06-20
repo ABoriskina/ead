@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 
 	"github.com/cilium/ebpf"
@@ -19,13 +20,43 @@ import (
 
 const taskCommLen = 16
 
+type eventType uint32
+
+const (
+	eventExecve eventType = iota
+	eventConnect
+	eventOpenat
+	eventUnlink
+	eventRename
+	eventChmod
+	eventClone
+)
+
+type eventsHeader struct {
+	Type eventType
+	Pid  uint32
+	Uid  uint32
+
+	_ uint32
+
+	TimestampNs uint64
+	Comm        [taskCommLen]byte
+}
+
 type tcpConnectionEvent struct {
-	Pid   uint32
-	Comm  [taskCommLen]byte
+	Header eventsHeader
+
 	Saddr uint32
 	Daddr uint32
+
 	Sport uint16
 	Dport uint16
+}
+
+type executionEvent struct {
+	Header   eventsHeader
+	Filename [256]byte
+	Argv     [128]byte
 }
 
 func main() {
@@ -40,7 +71,7 @@ func main() {
 
 	port := uint16(portValue)
 
-	spec, err := ebpf.LoadCollectionSpec("connections.bpf.o")
+	spec, err := ebpf.LoadCollectionSpec("collector.bpf.o")
 	if err != nil {
 		log.Fatalf("failed to open BPF object: %v", err)
 	}
@@ -62,21 +93,16 @@ func main() {
 		log.Fatalf("failed to update tcp_connection_config: %v", err)
 	}
 
-	prog, ok := collection.Programs["trace_tcp_state"]
-	if !ok {
-		log.Fatal("failed to find BPF program trace_tcp_state")
+	links, err := attachPrograms(spec, collection)
+	if err != nil {
+		log.Fatalf("failed to attach BPF programs: %v", err)
 	}
 
-	tp, err := link.Tracepoint(
-		"sock",
-		"inet_sock_set_state",
-		prog,
-		nil,
-	)
-	if err != nil {
-		log.Fatalf("failed to attach BPF program: %v", err)
-	}
-	defer tp.Close()
+	defer func() {
+		for _, l := range links {
+			l.Close()
+		}
+	}()
 
 	eventsMap, ok := collection.Maps["events"]
 	if !ok {
@@ -127,34 +153,143 @@ func main() {
 }
 
 func handleEvent(data []byte) error {
-	var event tcpConnectionEvent
-
-	if err := binary.Read(
-		bytes.NewReader(data),
-		binary.LittleEndian,
-		&event,
-	); err != nil {
-		return err
+	if len(data) < 4 {
+		return fmt.Errorf("event is too small")
 	}
 
-	srcIP := uint32ToIPv4(event.Saddr)
-	dstIP := uint32ToIPv4(event.Daddr)
+	eventType := eventType(binary.LittleEndian.Uint32(data[:4]))
 
-	fmt.Printf(
-		"pid=%d comm=%s %s:%d -> %s:%d\n",
-		event.Pid,
-		cString(event.Comm[:]),
-		srcIP,
-		event.Sport,
-		dstIP,
-		event.Dport,
-	)
+	switch eventType {
+	case eventConnect:
+		var event tcpConnectionEvent
 
-	if err := sendTCPEventToAnalyzer(&event); err != nil {
-		log.Printf("failed to send event to analyzer: %v", err)
+		if err := binary.Read(
+			bytes.NewReader(data),
+			binary.LittleEndian,
+			&event,
+		); err != nil {
+			return err
+		}
+
+		srcIP := uint32ToIPv4(event.Saddr)
+		dstIP := uint32ToIPv4(event.Daddr)
+
+		fmt.Printf(
+			"[EVENT_CONNECT] pid=%d comm=%s %s:%d -> %s:%d\n",
+			event.Header.Pid,
+			cString(event.Header.Comm[:]),
+			srcIP,
+			event.Sport,
+			dstIP,
+			event.Dport,
+		)
+
+		if err := sendTCPEventToAnalyzer(&event); err != nil {
+			log.Printf("failed to send tcp event to analyzer: %v", err)
+		}
+
+	case eventExecve:
+		var event executionEvent
+
+		if err := binary.Read(
+			bytes.NewReader(data),
+			binary.LittleEndian,
+			&event,
+		); err != nil {
+			return err
+		}
+
+		fmt.Printf(
+			"[EVENT_EXECVE] pid=%d uid=%d comm=%s file=%s argv=%s\n",
+			event.Header.Pid,
+			event.Header.Uid,
+			cString(event.Header.Comm[:]),
+			cString(event.Filename[:]),
+			cString(event.Argv[:]),
+		)
+
+		if err := sendExecveEventToAnalyzer(&event); err != nil {
+			log.Printf("failed to send execve event to analyzer: %v", err)
+		}
 	}
 
 	return nil
+}
+
+func attachPrograms(
+	spec *ebpf.CollectionSpec,
+	collection *ebpf.Collection,
+) ([]link.Link, error) {
+	var links []link.Link
+
+	for name, programSpec := range spec.Programs {
+		program, ok := collection.Programs[name]
+		if !ok {
+			return nil, fmt.Errorf("program %s not found", name)
+		}
+
+		section := programSpec.SectionName
+
+		switch {
+		case strings.HasPrefix(section, "tracepoint/"):
+			parts := strings.Split(section, "/")
+			if len(parts) != 3 {
+				return nil, fmt.Errorf("invalid tracepoint section: %s", section)
+			}
+
+			l, err := link.Tracepoint(
+				parts[1],
+				parts[2],
+				program,
+				nil,
+			)
+			if err != nil {
+				return nil, fmt.Errorf(
+					"attach %s: %w",
+					section,
+					err,
+				)
+			}
+
+			links = append(links, l)
+
+		case strings.HasPrefix(section, "kprobe/"):
+			symbol := strings.TrimPrefix(section, "kprobe/")
+
+			l, err := link.Kprobe(symbol, program, nil)
+			if err != nil {
+				return nil, fmt.Errorf(
+					"attach %s: %w",
+					section,
+					err,
+				)
+			}
+
+			links = append(links, l)
+
+		case strings.HasPrefix(section, "kretprobe/"):
+			symbol := strings.TrimPrefix(section, "kretprobe/")
+
+			l, err := link.Kretprobe(symbol, program, nil)
+			if err != nil {
+				return nil, fmt.Errorf(
+					"attach %s: %w",
+					section,
+					err,
+				)
+			}
+
+			links = append(links, l)
+
+		default:
+			return nil, fmt.Errorf(
+				"unsupported BPF section: %s",
+				section,
+			)
+		}
+	}
+
+	return links, nil
 }
 
 func uint32ToIPv4(addr uint32) net.IP {

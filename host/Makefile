@@ -1,14 +1,19 @@
 CLANG = clang
 GO = go
 
-BPF_CFLAGS = -O2 -g -Wall -target bpf -D__TARGET_ARCH_x86 -I.
-
 USER_DIR = agent
 BPF_DIR = ebpf
 BUILD_DIR = build
 
-BPF_SRC = $(BPF_DIR)/connections.bpf.c
-BPF_OBJ = $(BUILD_DIR)/connections.bpf.o
+INCLUDES = -I$(USER_DIR) -I$(BPF_DIR)
+
+BPF_CFLAGS = -O2 -g -Wall -target bpf -D__TARGET_ARCH_x86 $(INCLUDES)
+
+BPF_SRC = $(BPF_DIR)/collector.bpf.c
+BPF_OBJ = $(BUILD_DIR)/collector.bpf.o
+BPF_HEADERS = \
+    $(BPF_DIR)/collector.h \
+    $(BPF_DIR)/vmlinux.h
 
 USER_SRC = $(wildcard $(USER_DIR)/*.go)
 USER_BIN = $(BUILD_DIR)/agent
@@ -20,7 +25,7 @@ all: $(BUILD_DIR) $(BPF_OBJ) $(USER_BIN)
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
-$(BPF_OBJ): $(BPF_SRC)
+$(BPF_OBJ): $(BPF_SRC) $(BPF_HEADERS)
 	$(CLANG) $(BPF_CFLAGS) -c $< -o $@
 
 $(USER_BIN): $(USER_SRC)

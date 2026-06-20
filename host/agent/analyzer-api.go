@@ -14,7 +14,7 @@ const (
 
 var analyzerConn net.Conn
 
-type analyzerEvent struct {
+type analyzerTCPEvent struct {
 	Timestamp string `json:"timestamp"`
 	EventType string `json:"event_type"`
 	Sensor    string `json:"sensor"`
@@ -26,21 +26,34 @@ type analyzerEvent struct {
 	DestIP   string `json:"dest_ip"`
 	DestPort uint16 `json:"dest_port"`
 
-	Process processInfo `json:"process"`
-	Flow    flowInfo    `json:"flow"`
+	Process analyzerProcess `json:"process"`
+	Flow    analyzerFlow    `json:"flow"`
 }
 
-type processInfo struct {
+type analyzerExecveEvent struct {
+	Timestamp string `json:"timestamp"`
+	EventType string `json:"event_type"`
+	Sensor    string `json:"sensor"`
+	Host      string `json:"host"`
+	Proto     string `json:"proto"`
+
+	Process analyzerProcess `json:"process"`
+	Flow    analyzerFlow    `json:"flow"`
+}
+
+type analyzerProcess struct {
 	Pid  uint32 `json:"pid"`
 	Comm string `json:"comm"`
 }
 
-type flowInfo struct {
+type analyzerFlow struct {
 	State string `json:"state"`
 }
 
 func getTimestamp() string {
-	return time.Now().UTC().Format("2006-01-02T15:04:05.000000Z")
+	return time.Now().
+		UTC().
+		Format("2006-01-02T15:04:05.000000Z")
 }
 
 func connectToAnalyzer() error {
@@ -62,19 +75,12 @@ func connectToAnalyzer() error {
 	return nil
 }
 
-func closeAnalyzerConnection() {
-	if analyzerConn != nil {
-		analyzerConn.Close()
-		analyzerConn = nil
-	}
-}
-
 func sendTCPEventToAnalyzer(e *tcpConnectionEvent) error {
 	if analyzerConn == nil {
 		return nil
 	}
 
-	event := analyzerEvent{
+	event := analyzerTCPEvent{
 		Timestamp: getTimestamp(),
 		EventType: "flow",
 		Sensor:    "ebpf-anomaly-detector",
@@ -86,26 +92,57 @@ func sendTCPEventToAnalyzer(e *tcpConnectionEvent) error {
 		DestIP:   uint32ToIPv4(e.Daddr).String(),
 		DestPort: e.Dport,
 
-		Process: processInfo{
-			Pid:  e.Pid,
-			Comm: cString(e.Comm[:]),
+		Process: analyzerProcess{
+			Pid:  e.Header.Pid,
+			Comm: cString(e.Header.Comm[:]),
 		},
 
-		Flow: flowInfo{
+		Flow: analyzerFlow{
 			State: "established",
 		},
 	}
 
+	return sendAnalyzerEvent(event)
+}
+
+func sendExecveEventToAnalyzer(e *executionEvent) error {
+	if analyzerConn == nil {
+		return nil
+	}
+
+	event := analyzerExecveEvent{
+		Timestamp: getTimestamp(),
+		EventType: "flow",
+		Sensor:    "ebpf-anomaly-detector",
+		Host:      "localhost",
+		Proto:     "TCP",
+
+		Process: analyzerProcess{
+			Pid:  e.Header.Pid,
+			Comm: cString(e.Header.Comm[:]),
+		},
+
+		Flow: analyzerFlow{
+			State: "established",
+		},
+	}
+
+	return sendAnalyzerEvent(event)
+}
+
+func sendAnalyzerEvent(event any) error {
 	data, err := json.Marshal(event)
 	if err != nil {
-		return fmt.Errorf("marshal event: %w", err)
+		return fmt.Errorf("marshal analyzer event: %w", err)
 	}
 
 	data = append(data, '\n')
 
 	if _, err := analyzerConn.Write(data); err != nil {
-		closeAnalyzerConnection()
-		return fmt.Errorf("send analyzer: %w", err)
+		analyzerConn.Close()
+		analyzerConn = nil
+
+		return fmt.Errorf("send analyzer event: %w", err)
 	}
 
 	return nil
