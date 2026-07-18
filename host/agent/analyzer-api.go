@@ -156,8 +156,8 @@ func sendExecveEventToAnalyzer(e *executionEvent) error {
 		Host:      "localhost",
 		Proto:     "TCP",
 
-		Filename: cString(e.Filename[:]),
-		Argv:     cString(e.Argv[:]),
+		Filename: cString(e.Pathname[:]),
+		Argv:     cString(e.Argv[0][:]),
 
 		Process: analyzerProcess{
 			Pid:  e.Header.Pid,

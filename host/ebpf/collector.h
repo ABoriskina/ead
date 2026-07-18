@@ -7,10 +7,14 @@
 #define AT_FDCWD -100
 #define TASK_COMM_LEN 16
 #define MAX_PATH_LEN 256
+#define MAX_ARG_LEN 64
+#define MAX_ARGS 3
 
 enum event_type
 {
     EVENT_EXECVE,
+    EVENT_EXECVE_EXIT,
+
     EVENT_CONNECT,
 
     EVENT_OPENAT,
@@ -31,6 +35,9 @@ enum event_type
 
 enum syscall_types
 {
+    EXECVE_SYSCALL,
+    EXECVEAT_SYSCALL,
+    
     OPEN_SYSCALL,
     OPENAT_SYSCALL,
 
@@ -70,8 +77,10 @@ struct tcp_connection_event
 struct execution_event
 {
     struct events_header header;
-    char filename[MAX_PATH_LEN];
-    char argv[128];
+    __s32 fd;
+    __u32 flags;
+    char pathname[MAX_PATH_LEN];
+    char argv[MAX_ARGS][MAX_ARG_LEN];
 };
 
 struct opening_event // fchmod uses the same struct
@@ -101,13 +110,6 @@ struct renaming_event
     __u32 flags;
 };
 
-struct chmod_event
-{
-    struct events_header header;
-    char filename[MAX_PATH_LEN];
-    __u32 mode;
-};
-
 struct
 {
     __uint(type, BPF_MAP_TYPE_RINGBUF);
@@ -125,11 +127,11 @@ struct
 
 struct
 {
-    __uint(type, BPF_MAP_TYPE_ARRAY);
-    __uint(max_entries, 1);
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 16384);
     __type(key, __u32);
-    __type(value, __u16);
-} execution_config SEC(".maps");
+    __type(value, struct execution_event);
+} pending_execve_map SEC(".maps");
 
 struct
 {
@@ -149,6 +151,14 @@ struct
 
 struct
 {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 16384);
+    __type(key, __u32);
+    __type(value, struct opening_event);
+} pending_fchmod_map SEC(".maps");
+
+struct
+{
     __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
     __uint(max_entries, 1);
     __type(key, __u32);
@@ -157,8 +167,8 @@ struct
 
 struct
 {
-    __uint(type, BPF_MAP_TYPE_HASH);
-    __uint(max_entries, 16384);
+    __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
+    __uint(max_entries, 1);
     __type(key, __u32);
-    __type(value, struct opening_event);
-} pending_fchmod_map SEC(".maps");
+    __type(value, struct execution_event);
+} execve_scratch_map SEC(".maps");

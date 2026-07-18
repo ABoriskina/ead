@@ -51,37 +51,142 @@ int trace_tcp_state(struct trace_event_raw_inet_sock_set_state *ctx)
 /*-----------------------------------------------------------------*/
 /*--------------------------- EXECUTION ---------------------------*/
 /*-----------------------------------------------------------------*/
+
+static __always_inline int save_execve_event(__s32 fd, const char *pathname, const char *const *argv, __u32 flags, __u32 syscall_type)
+{
+    if (!pathname)
+        return 0;
+
+    __u64 pid_tgid = bpf_get_current_pid_tgid();
+    __u32 tid = (__u32)pid_tgid;
+    __u32 zero = 0;
+
+    struct execution_event *e = bpf_map_lookup_elem(&execve_scratch_map, &zero);
+
+    if (!e)
+        return 0;
+
+    __builtin_memset(e, 0, sizeof(*e));
+
+    e->header.type = EVENT_EXECVE;
+
+    e->header.pid = pid_tgid >> 32;
+    e->header.tid = pid_tgid & 0xffffffff;
+
+    e->header.uid = bpf_get_current_uid_gid() & 0xffffffff;
+    e->header.timestamp_ns = bpf_ktime_get_ns();
+
+    e->fd = fd;
+    e->flags = flags;
+    e->header.syscall_type = syscall_type;
+
+    bpf_get_current_comm(e->header.comm, sizeof(e->header.comm));
+
+    long pathname_length = bpf_probe_read_user_str(e->pathname, sizeof(e->pathname), pathname);
+    if (pathname_length < 0)
+        return 0;
+
+    if (argv)
+    {
+        #pragma unroll
+        for (int i = 0; i < MAX_ARGS; i++)
+        {
+            const char *argument = 0;
+            long result = bpf_probe_read_user(&argument, sizeof(argument), &argv[i]);
+            if (result < 0 || !argument)
+                break;
+
+            bpf_probe_read_user_str(e->argv[i], sizeof(e->argv[i]), argument);
+        }
+    }
+
+    long result = bpf_map_update_elem(&pending_execve_map, &tid, e, BPF_ANY);
+
+    return 0;
+}
+
 SEC("tracepoint/syscalls/sys_enter_execve")
-int trace_execution(struct trace_event_raw_sys_enter *ctx)
+int trace_execve(struct trace_event_raw_sys_enter *ctx)
 {
     /*
     filename: 0x%08lx, argv: 0x%08lx, envp: 0x%08lx
     ((unsigned long)(REC->filename)), ((unsigned long)(REC->argv)), ((unsigned long)(REC->envp))
     */
 
-    if (!ctx->args[0])
+    return save_execve_event(
+        AT_FDCWD,
+        (const char *)ctx->args[0],
+        (const char *const *)ctx->args[1],
+        0,
+        EXECVE_SYSCALL
+    );
+}
+
+SEC("tracepoint/syscalls/sys_enter_execveat")
+int trace_execveat(struct trace_event_raw_sys_enter *ctx)
+{
+    /*
+    fd: 0x%08lx, filename: 0x%08lx, argv: 0x%08lx, envp: 0x%08lx, flags: 0x%08lx
+    ((unsigned long)(REC->fd)), ((unsigned long)(REC->filename)), ((unsigned long)(REC->argv)), ((unsigned long)(REC->envp)), ((unsigned long)(REC->flags))
+    */
+
+    return save_execve_event(
+        (__s32)ctx->args[0],
+        (const char *)ctx->args[1],
+        (const char *const *)ctx->args[2],
+        (__u32)ctx->args[4],
+        EXECVEAT_SYSCALL
+    );
+}
+
+static __always_inline int save_execve_event_exit(__s64 res, __u32 syscall_type)
+{
+    __u64 pid_tgid = bpf_get_current_pid_tgid();
+    __u32 tid = (__u32)pid_tgid;
+
+    struct execution_event *pending = bpf_map_lookup_elem(&pending_execve_map, &tid);
+    if (!pending)
         return 0;
-    const char *filename = (const char *)ctx->args[0];
 
     struct execution_event *e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
     if (!e)
+    {
+        bpf_map_delete_elem(&pending_execve_map, &tid);
         return 0;
+    }
+
+    *e = *pending;
 
     e->header.type = EVENT_EXECVE;
-    e->header.pid = bpf_get_current_pid_tgid() >> 32;
-    e->header.uid = bpf_get_current_uid_gid() & 0xffffffff;
+    e->header.res = res;
 
-    bpf_get_current_comm(&e->header.comm, sizeof(e->header.comm));
-    bpf_probe_read_user_str(e->filename, sizeof(e->filename), filename);
-
-    const char *const *argv = (const char *const *)ctx->args[1];
-    const char *arg0 = NULL;
-    bpf_probe_read_user(&arg0, sizeof(arg0), &argv[0]);
-    if (arg0)
-        bpf_probe_read_user_str(e->argv, sizeof(e->argv), arg0);
+    bpf_map_delete_elem(&pending_execve_map, &tid);
 
     bpf_ringbuf_submit(e, 0);
+
     return 0;
+}
+
+SEC("tracepoint/syscalls/sys_exit_execve")
+int trace_execve_exit(struct trace_event_raw_sys_exit *ctx)
+{
+    /*
+    0x%lx
+    REC->ret
+    */
+
+    return save_execve_event_exit((__s64)ctx->ret, EXECVE_SYSCALL);
+}
+
+SEC("tracepoint/syscalls/sys_exit_execveat")
+int trace_execveat_exit(struct trace_event_raw_sys_exit *ctx)
+{
+    /*
+    0x%lx
+    REC->ret
+    */
+
+    return save_execve_event_exit((__s64)ctx->ret, EXECVEAT_SYSCALL);
 }
 
 /*-----------------------------------------------------------------*/

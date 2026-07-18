@@ -21,12 +21,16 @@ import (
 const (
 	taskCommLen = 16
 	maxPathLen  = 256
+	maxArgLen   = 64
+	maxArgs     = 3
 )
 
 type eventType uint32
 
 const (
 	eventExecve eventType = iota
+	eventExecveExit
+
 	eventConnect
 
 	eventOpenat
@@ -72,9 +76,13 @@ type tcpConnectionEvent struct {
 }
 
 type executionEvent struct {
-	Header   eventsHeader
-	Filename [maxPathLen]byte
-	Argv     [128]byte
+	Header eventsHeader
+
+	Fd    int32
+	Flags uint32
+
+	Pathname [maxPathLen]byte
+	Argv     [maxArgs][maxArgLen]byte
 }
 
 type openingEvent struct {
@@ -249,12 +257,14 @@ func handleEvent(data []byte) error {
 		}
 
 		fmt.Printf(
-			"[EVENT_EXECVE] pid=%d uid=%d comm=%s file=%s argv=%s\n",
+			"[EVENT_EXECVE] pid=%d uid=%d comm=%s file=%s argv0=%s argv1=%s argv2=%s\n",
 			event.Header.Pid,
 			event.Header.Uid,
 			cString(event.Header.Comm[:]),
-			cString(event.Filename[:]),
-			cString(event.Argv[:]),
+			cString(event.Pathname[:]),
+			cString(event.Argv[0][:]),
+			cString(event.Argv[1][:]),
+			cString(event.Argv[2][:]),
 		)
 
 		if err := sendExecveEventToAnalyzer(&event); err != nil {
