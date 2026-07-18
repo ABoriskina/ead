@@ -12,6 +12,7 @@ enum event_type
     EVENT_EXECVE,
     EVENT_CONNECT,
     EVENT_OPENAT,
+    EVENT_OPENAT_EXIT,
     EVENT_RENAME,
     EVENT_CHMOD,
     EVENT_CLONE,
@@ -24,6 +25,7 @@ struct events_header
     __u32 pid;
     __u32 uid;
     __u64 timestamp_ns;
+    __u64 res;
     char comm[TASK_COMM_LEN];
 };
 

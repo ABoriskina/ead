@@ -92,7 +92,12 @@ int trace_openat(struct trace_event_raw_sys_enter *ctx)
     /*args[0] = dirfd
     args[1] = pathname
     args[2] = flags
-    args[3] = mode*/
+    args[3] = mode
+
+    name: sys_enter_openat
+    dfd: 0x%08lx, filename: 0x%08lx, flags: 0x%08lx, mode: 0x%08lx 
+    ((unsigned long)(REC->dfd)), ((unsigned long)(REC->filename)), ((unsigned long)(REC->flags)), ((unsigned long)(REC->mode))
+    */
 
     if (!ctx->args[1])
         return 0;
@@ -112,6 +117,31 @@ int trace_openat(struct trace_event_raw_sys_enter *ctx)
     e->dirfd = (__s32)ctx->args[0];
     e->flags = (__u32)ctx->args[2];
     e->mode = (__u32)ctx->args[3];
+
+    bpf_ringbuf_submit(e, 0);
+    return 0;
+}
+
+SEC("tracepoint/syscalls/sys_exit_openat")
+int trace_openat_exit(struct trace_event_raw_sys_exit *ctx)
+{
+    /*
+    name: sys_exit_openat
+    0x%lx
+    REC->ret
+    */
+
+    struct events_header *e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
+    if (!e)
+        return 0;
+
+    e->type = EVENT_OPENAT_EXIT;
+    e->pid = bpf_get_current_pid_tgid() >> 32;
+    e->uid = bpf_get_current_uid_gid() & 0xffffffff;
+
+    bpf_get_current_comm(&e->comm, sizeof(e->comm));
+
+    e->res = (__u64)ctx->ret;
 
     bpf_ringbuf_submit(e, 0);
     return 0;

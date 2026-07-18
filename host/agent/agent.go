@@ -29,6 +29,7 @@ const (
 	eventExecve eventType = iota
 	eventConnect
 	eventOpenat
+	eventOpenatExit
 	eventUnlink
 	eventRename
 	eventChmod
@@ -43,7 +44,9 @@ type eventsHeader struct {
 	_ uint32
 
 	TimestampNs uint64
-	Comm        [taskCommLen]byte
+	Res         uint64
+
+	Comm [taskCommLen]byte
 }
 
 type tcpConnectionEvent struct {
@@ -248,6 +251,28 @@ func handleEvent(data []byte) error {
 
 		if err := sendOpenatEventToAnalyzer(&event); err != nil {
 			log.Printf("failed to send openat event to analyzer: %v", err)
+		}
+	case eventOpenatExit:
+		var event eventsHeader
+
+		if err := binary.Read(
+			bytes.NewReader(data),
+			binary.LittleEndian,
+			&event,
+		); err != nil {
+			return err
+		}
+
+		fmt.Printf(
+			"[EVENT_OPENAT_EXIT] pid=%d uid=%d comm=%s res=0x%08x\n",
+			event.Pid,
+			event.Uid,
+			cString(event.Comm[:]),
+			event.Res,
+		)
+
+		if err := sendOpenatExitEventToAnalyzer(&event); err != nil {
+			log.Printf("failed to send openat exit event to analyzer: %v", err)
 		}
 	}
 

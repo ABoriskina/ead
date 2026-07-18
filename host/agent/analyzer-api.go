@@ -69,6 +69,17 @@ type analyzerOpenatEvent struct {
 	Flow    analyzerFlow    `json:"flow"`
 }
 
+type analyzerOpenatExitEvent struct {
+	Timestamp string `json:"timestamp"`
+	EventType string `json:"event_type"`
+	Sensor    string `json:"sensor"`
+	Host      string `json:"host"`
+
+	Result uint64 `json:"result"`
+
+	Process analyzerProcess `json:"process"`
+}
+
 func getTimestamp() string {
 	return time.Now().
 		UTC().
@@ -176,6 +187,28 @@ func sendOpenatEventToAnalyzer(e *openingEvent) error {
 
 		Flow: analyzerFlow{
 			State: "established",
+		},
+	}
+
+	return sendAnalyzerEvent(event)
+}
+
+func sendOpenatExitEventToAnalyzer(e *eventsHeader) error {
+	if analyzerConn == nil {
+		return nil
+	}
+
+	event := analyzerOpenatExitEvent{
+		Timestamp: getTimestamp(),
+		EventType: "openat_exit",
+		Sensor:    "ebpf-anomaly-detector",
+		Host:      "localhost",
+
+		Result: e.Res,
+
+		Process: analyzerProcess{
+			Pid:  e.Pid,
+			Comm: cString(e.Comm[:]),
 		},
 	}
 
