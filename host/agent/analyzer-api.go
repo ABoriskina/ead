@@ -79,7 +79,12 @@ type analyzerRenameEvent struct {
 
 	Oldname string `json:"oldname"`
 	Newname string `json:"newname"`
-	Result  int64  `json:"result"`
+
+	Olddirfd    int32  `json:"olddirfd"`
+	Newdirfd    int32  `json:"newdirfd"`
+	Flags       uint32 `json:"flags"`
+	SyscallType uint32 `json:"syscall_type"`
+	Result      int64  `json:"result"`
 
 	Process analyzerProcess `json:"process"`
 }
@@ -212,7 +217,12 @@ func sendRenameEventToAnalyzer(e *renamingEvent) error {
 
 		Oldname: cString(e.Oldname[:]),
 		Newname: cString(e.Newname[:]),
-		Result:  e.Header.Res,
+
+		Olddirfd:    e.Olddirfd,
+		Newdirfd:    e.Newdirfd,
+		Flags:       e.Flags,
+		SyscallType: e.SyscallType,
+		Result:      e.Header.Res,
 
 		Process: analyzerProcess{
 			Pid:  e.Header.Pid,

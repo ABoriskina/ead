@@ -54,10 +54,7 @@ int trace_tcp_state(struct trace_event_raw_inet_sock_set_state *ctx)
 SEC("tracepoint/syscalls/sys_enter_execve")
 int trace_execution(struct trace_event_raw_sys_enter *ctx)
 {
-    /*args[0] = filename
-    args[1] = argv
-    args[2] = envp
-
+    /*
     filename: 0x%08lx, argv: 0x%08lx, envp: 0x%08lx
     ((unsigned long)(REC->filename)), ((unsigned long)(REC->argv)), ((unsigned long)(REC->envp))
     */
@@ -93,11 +90,7 @@ int trace_execution(struct trace_event_raw_sys_enter *ctx)
 SEC("tracepoint/syscalls/sys_enter_openat")
 int trace_openat(struct trace_event_raw_sys_enter *ctx)
 {
-    /*args[0] = dirfd
-    args[1] = pathname
-    args[2] = flags
-    args[3] = mode
-
+    /*
     name: sys_enter_openat
     dfd: 0x%08lx, filename: 0x%08lx, flags: 0x%08lx, mode: 0x%08lx 
     ((unsigned long)(REC->dfd)), ((unsigned long)(REC->filename)), ((unsigned long)(REC->flags)), ((unsigned long)(REC->mode))
@@ -173,18 +166,11 @@ int trace_openat_exit(struct trace_event_raw_sys_exit *ctx)
 /*-----------------------------------------------------------------*/
 /*---------------------------- RENAMING ---------------------------*/
 /*-----------------------------------------------------------------*/
-SEC("tracepoint/syscalls/sys_enter_rename")
-int trace_rename(struct trace_event_raw_sys_enter *ctx)
+static __always_inline int save_rename_event(const char *oldname, const char *newname,
+    __s32 olddirfd, __s32 newdirfd, __u32 flags, __u32 syscall_type)
 {
-    /*
-    oldname: 0x%08lx, newname: 0x%08lx"
-    ((unsigned long)(REC->oldname)), ((unsigned long)(REC->newname))
-    */
-
-    if (ctx->args[0] == 0 || ctx->args[1] == 0)
+    if (!oldname || !newname)
         return 0;
-    const char *oldname = (const char *)ctx->args[0];
-    const char *newname = (const char *)ctx->args[1];
 
     __u32 zero = 0;
 
@@ -202,29 +188,72 @@ int trace_rename(struct trace_event_raw_sys_enter *ctx)
 
     e->header.uid = bpf_get_current_uid_gid() & 0xffffffff;
 
+    e->olddirfd = olddirfd;
+    e->newdirfd = newdirfd;
+    e->flags = flags;
+    e->syscall_type = syscall_type;
+
     bpf_get_current_comm(e->header.comm, sizeof(e->header.comm));
 
-    long oldname_len = bpf_probe_read_user_str(e->oldname, sizeof(e->oldname), oldname);
-    if (oldname_len < 0)
-        return 0;
-
-    long newname_len = bpf_probe_read_user_str(e->newname, sizeof(e->newname), newname);
-    if (newname_len < 0)
-        return 0;
+    bpf_probe_read_user_str(e->oldname, sizeof(e->oldname), oldname);
+    bpf_probe_read_user_str(e->newname, sizeof(e->newname), newname);
 
     bpf_map_update_elem(&pending_rename_map, &e->header.tid, e, BPF_ANY);
 
     return 0;
 }
 
-SEC("tracepoint/syscalls/sys_exit_rename")
-int trace_rename_exit(struct trace_event_raw_sys_exit *ctx)
+SEC("tracepoint/syscalls/sys_enter_rename")
+int trace_rename(struct trace_event_raw_sys_enter *ctx)
 {
     /*
-    0x%lx
-    REC->ret
+    oldname: 0x%08lx, newname: 0x%08lx"
+    ((unsigned long)(REC->oldname)), ((unsigned long)(REC->newname))
+    */
+    return save_rename_event(
+        (const char *)ctx->args[0],
+        (const char *)ctx->args[1],
+        AT_FDCWD,
+        AT_FDCWD,
+        0,
+        RENAME_SYSCALL);
+}
+
+SEC("tracepoint/syscalls/sys_enter_renameat")
+int trace_renameat(struct trace_event_raw_sys_enter *ctx)
+{
+    /*
+    olddfd: 0x%08lx, oldname: 0x%08lx, newdfd: 0x%08lx, newname: 0x%08lx
+    ((unsigned long)(REC->olddfd)), ((unsigned long)(REC->oldname)), ((unsigned long)(REC->newdfd)), ((unsigned long)(REC->newname))
+    */
+    return save_rename_event(
+        (const char *)ctx->args[1],
+        (const char *)ctx->args[3],
+        (__s32)ctx->args[0],
+        (__s32)ctx->args[2],
+        0,
+        RENAMEAT_SYSCALL);
+}
+
+SEC("tracepoint/syscalls/sys_enter_renameat2")
+int trace_renameat2(struct trace_event_raw_sys_enter *ctx)
+{
+    /*
+    olddfd: 0x%08lx, oldname: 0x%08lx, newdfd: 0x%08lx, newname: 0x%08lx, flags: 0x%08lx
+    ((unsigned long)(REC->olddfd)), ((unsigned long)(REC->oldname)), ((unsigned long)(REC->newdfd)), ((unsigned long)(REC->newname)), ((unsigned long)(REC->flags))
     */
 
+    return save_rename_event(
+        (const char *)ctx->args[1],
+        (const char *)ctx->args[3],
+        (__s32)ctx->args[0],
+        (__s32)ctx->args[2],
+        (__u32)ctx->args[4],
+        RENAMEAT2_SYSCALL);
+}
+
+static __always_inline int save_rename_event_exit(__s64 res, __u32 syscall_type)
+{
     __u64 pid_tgid = bpf_get_current_pid_tgid();
     __u32 tid = (__u32)pid_tgid;
     
@@ -242,13 +271,46 @@ int trace_rename_exit(struct trace_event_raw_sys_exit *ctx)
     *e = *pending;
 
     e->header.type = EVENT_RENAME_EXIT;
-    e->header.res = (__s64)ctx->ret;
+    e->header.res = res;
     
     bpf_map_delete_elem(&pending_rename_map, &tid);
 
     bpf_ringbuf_submit(e, 0);
 
     return 0;
+}
+
+SEC("tracepoint/syscalls/sys_exit_rename")
+int trace_rename_exit(struct trace_event_raw_sys_exit *ctx)
+{
+    /*
+    0x%lx
+    REC->ret
+    */
+    return save_rename_event_exit((__s64)ctx->ret, RENAME_SYSCALL);
+
+}
+
+SEC("tracepoint/syscalls/sys_exit_renameat")
+int trace_renameat_exit(struct trace_event_raw_sys_exit *ctx)
+{
+    /*
+    0x%lx
+    REC->ret
+    */
+    return save_rename_event_exit((__s64)ctx->ret, RENAMEAT_SYSCALL);
+
+}
+
+SEC("tracepoint/syscalls/sys_exit_renameat2")
+int trace_renameat2_exit(struct trace_event_raw_sys_exit *ctx)
+{
+    /*
+    0x%lx
+    REC->ret
+    */
+    return save_rename_event_exit((__s64)ctx->ret, RENAMEAT2_SYSCALL);
+
 }
 
 char LICENSE[] SEC("license") = "GPL";

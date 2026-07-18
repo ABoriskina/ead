@@ -80,6 +80,11 @@ type renamingEvent struct {
 	Header  eventsHeader
 	Oldname [maxPathLen]byte
 	Newname [maxPathLen]byte
+
+	Olddirfd    int32
+	Newdirfd    int32
+	Flags       uint32
+	SyscallType uint32
 }
 
 func main() {
@@ -303,12 +308,16 @@ func handleEvent(data []byte) error {
 
 		// TODO: too much noise
 		fmt.Printf(
-			"[EVENT_RENAME] pid=%d uid=%d comm=%s oldname=%s newname=%s res=%d\n",
+			"[EVENT_RENAME] pid=%d uid=%d comm=%s oldname=%s newname=%s olddirfd=%d newdirfd=%d flags=%d syscall_type=%d res=%d\n",
 			event.Header.Pid,
 			event.Header.Uid,
 			cString(event.Header.Comm[:]),
 			cString(event.Oldname[:]),
 			cString(event.Newname[:]),
+			event.Olddirfd,
+			event.Newdirfd,
+			event.Flags,
+			event.SyscallType,
 			event.Header.Res,
 		)
 

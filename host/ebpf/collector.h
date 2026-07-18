@@ -4,6 +4,7 @@
 #define AF_INET 2
 #define IPPROTO_TCP 6
 #define TCP_ESTABLISHED 1
+#define AT_FDCWD -100
 #define TASK_COMM_LEN 16
 #define MAX_PATH_LEN 256
 
@@ -18,6 +19,13 @@ enum event_type
     EVENT_CHMOD,
     EVENT_CLONE,
     EVENT_UNLINK,
+};
+
+enum syscall_types
+{
+    RENAME_SYSCALL,
+    RENAMEAT_SYSCALL,
+    RENAMEAT2_SYSCALL,
 };
 
 struct events_header
@@ -69,6 +77,11 @@ struct renaming_event
     struct events_header header;
     char oldname[MAX_PATH_LEN];
     char newname[MAX_PATH_LEN];
+
+    __s32 olddirfd;
+    __s32 newdirfd;
+    __u32 flags;
+    __u32 syscall_type;
 };
 
 struct
