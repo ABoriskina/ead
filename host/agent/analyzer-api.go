@@ -14,6 +14,15 @@ const (
 
 var analyzerConn net.Conn
 
+type analyzerProcess struct {
+	Pid  uint32 `json:"pid"`
+	Comm string `json:"comm"`
+}
+
+type analyzerFlow struct {
+	State string `json:"state"`
+}
+
 type analyzerTCPEvent struct {
 	Timestamp string `json:"timestamp"`
 	EventType string `json:"event_type"`
@@ -37,17 +46,27 @@ type analyzerExecveEvent struct {
 	Host      string `json:"host"`
 	Proto     string `json:"proto"`
 
+	Filename string `json:"filename"`
+	Argv     string `json:"argv"`
+
 	Process analyzerProcess `json:"process"`
 	Flow    analyzerFlow    `json:"flow"`
 }
 
-type analyzerProcess struct {
-	Pid  uint32 `json:"pid"`
-	Comm string `json:"comm"`
-}
+type analyzerOpenatEvent struct {
+	Timestamp string `json:"timestamp"`
+	EventType string `json:"event_type"`
+	Sensor    string `json:"sensor"`
+	Host      string `json:"host"`
+	Proto     string `json:"proto"`
 
-type analyzerFlow struct {
-	State string `json:"state"`
+	Pathname string `json:"pathname"`
+	Dirfd    int32  `json:"dirfd"`
+	Flags    uint32 `json:"flags"`
+	Mode     uint32 `json:"mode"`
+
+	Process analyzerProcess `json:"process"`
+	Flow    analyzerFlow    `json:"flow"`
 }
 
 func getTimestamp() string {
@@ -116,6 +135,39 @@ func sendExecveEventToAnalyzer(e *executionEvent) error {
 		Sensor:    "ebpf-anomaly-detector",
 		Host:      "localhost",
 		Proto:     "TCP",
+
+		Filename: cString(e.Filename[:]),
+		Argv:     cString(e.Argv[:]),
+
+		Process: analyzerProcess{
+			Pid:  e.Header.Pid,
+			Comm: cString(e.Header.Comm[:]),
+		},
+
+		Flow: analyzerFlow{
+			State: "established",
+		},
+	}
+
+	return sendAnalyzerEvent(event)
+}
+
+func sendOpenatEventToAnalyzer(e *openingEvent) error {
+	if analyzerConn == nil {
+		return nil
+	}
+
+	event := analyzerOpenatEvent{
+		Timestamp: getTimestamp(),
+		EventType: "flow",
+		Sensor:    "ebpf-anomaly-detector",
+		Host:      "localhost",
+		Proto:     "TCP",
+
+		Pathname: cString(e.Pathname[:]),
+		Dirfd:    e.Dirfd,
+		Flags:    e.Flags,
+		Mode:     e.Mode,
 
 		Process: analyzerProcess{
 			Pid:  e.Header.Pid,

@@ -5,16 +5,17 @@
 #define IPPROTO_TCP 6
 #define TCP_ESTABLISHED 1
 #define TASK_COMM_LEN 16
+#define MAX_PATH_LEN 256
 
 enum event_type
 {
     EVENT_EXECVE,
     EVENT_CONNECT,
     EVENT_OPENAT,
-    EVENT_UNLINK,
     EVENT_RENAME,
     EVENT_CHMOD,
     EVENT_CLONE,
+    EVENT_UNLINK,
 };
 
 struct events_header
@@ -39,8 +40,26 @@ struct tcp_connection_event
 struct execution_event
 {
     struct events_header header;
-    char filename[256];
+    char filename[MAX_PATH_LEN];
     char argv[128];
+};
+
+struct opening_event
+{
+    struct events_header header;
+    char pathname[MAX_PATH_LEN];
+    __s32 dirfd;
+    __u32 flags;
+    __u32 mode;
+};
+
+struct renaming_event
+{
+    struct events_header header;
+    char pathname[MAX_PATH_LEN];
+    __s32 dirfd;
+    __u32 flags;
+    __u32 mode;
 };
 
 struct
@@ -49,6 +68,7 @@ struct
     __uint(max_entries, 256 * 1024);
 } events SEC(".maps");
 
+// TODO: universal cfg
 struct
 {
     __uint(type, BPF_MAP_TYPE_ARRAY);

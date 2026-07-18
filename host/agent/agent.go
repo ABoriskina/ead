@@ -18,7 +18,10 @@ import (
 	"github.com/cilium/ebpf/ringbuf"
 )
 
-const taskCommLen = 16
+const (
+	taskCommLen = 16
+	maxPathLen  = 256
+)
 
 type eventType uint32
 
@@ -55,8 +58,16 @@ type tcpConnectionEvent struct {
 
 type executionEvent struct {
 	Header   eventsHeader
-	Filename [256]byte
+	Filename [maxPathLen]byte
 	Argv     [128]byte
+}
+
+type openingEvent struct {
+	Header   eventsHeader
+	Pathname [maxPathLen]byte
+	Dirfd    int32
+	Flags    uint32
+	Mode     uint32
 }
 
 func main() {
@@ -185,7 +196,7 @@ func handleEvent(data []byte) error {
 		)
 
 		if err := sendTCPEventToAnalyzer(&event); err != nil {
-			log.Printf("failed to send tcp event to analyzer: %v", err)
+			log.Printf("failed to send connect event to analyzer: %v", err)
 		}
 
 	case eventExecve:
@@ -210,6 +221,33 @@ func handleEvent(data []byte) error {
 
 		if err := sendExecveEventToAnalyzer(&event); err != nil {
 			log.Printf("failed to send execve event to analyzer: %v", err)
+		}
+
+	case eventOpenat:
+		var event openingEvent
+
+		if err := binary.Read(
+			bytes.NewReader(data),
+			binary.LittleEndian,
+			&event,
+		); err != nil {
+			return err
+		}
+
+		// TODO: too much noise
+		fmt.Printf(
+			"[EVENT_OPENAT] pid=%d uid=%d comm=%s file=%s dirfd=%d flags=%d mode=%d\n",
+			event.Header.Pid,
+			event.Header.Uid,
+			cString(event.Header.Comm[:]),
+			cString(event.Pathname[:]),
+			event.Dirfd,
+			event.Flags,
+			event.Mode,
+		)
+
+		if err := sendOpenatEventToAnalyzer(&event); err != nil {
+			log.Printf("failed to send openat event to analyzer: %v", err)
 		}
 	}
 
@@ -244,11 +282,7 @@ func attachPrograms(
 				nil,
 			)
 			if err != nil {
-				return nil, fmt.Errorf(
-					"attach %s: %w",
-					section,
-					err,
-				)
+				return nil, fmt.Errorf("attach %s: %w", section, err)
 			}
 
 			links = append(links, l)
@@ -258,11 +292,7 @@ func attachPrograms(
 
 			l, err := link.Kprobe(symbol, program, nil)
 			if err != nil {
-				return nil, fmt.Errorf(
-					"attach %s: %w",
-					section,
-					err,
-				)
+				return nil, fmt.Errorf("attach %s: %w", section, err)
 			}
 
 			links = append(links, l)
@@ -272,11 +302,7 @@ func attachPrograms(
 
 			l, err := link.Kretprobe(symbol, program, nil)
 			if err != nil {
-				return nil, fmt.Errorf(
-					"attach %s: %w",
-					section,
-					err,
-				)
+				return nil, fmt.Errorf("attach %s: %w", section, err)
 			}
 
 			links = append(links, l)

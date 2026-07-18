@@ -54,7 +54,6 @@ int trace_tcp_state(struct trace_event_raw_inet_sock_set_state *ctx)
 SEC("tracepoint/syscalls/sys_enter_execve")
 int trace_execution(struct trace_event_raw_sys_enter *ctx)
 {
-
     /*args[0] = filename
     args[1] = argv
     args[2] = envp*/
@@ -79,6 +78,40 @@ int trace_execution(struct trace_event_raw_sys_enter *ctx)
     bpf_probe_read_user(&arg0, sizeof(arg0), &argv[0]);
     if (arg0)
         bpf_probe_read_user_str(e->argv, sizeof(e->argv), arg0);
+
+    bpf_ringbuf_submit(e, 0);
+    return 0;
+}
+
+/*-----------------------------------------------------------------*/
+/*---------------------------- OPENING ----------------------------*/
+/*-----------------------------------------------------------------*/
+SEC("tracepoint/syscalls/sys_enter_openat")
+int trace_openat(struct trace_event_raw_sys_enter *ctx)
+{
+    /*args[0] = dirfd
+    args[1] = pathname
+    args[2] = flags
+    args[3] = mode*/
+
+    if (!ctx->args[1])
+        return 0;
+    const char *pathname = (const char *)ctx->args[1];
+
+    struct opening_event *e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
+    if (!e)
+        return 0;
+
+    e->header.type = EVENT_OPENAT;
+    e->header.pid = bpf_get_current_pid_tgid() >> 32;
+    e->header.uid = bpf_get_current_uid_gid() & 0xffffffff;
+
+    bpf_get_current_comm(&e->header.comm, sizeof(e->header.comm));
+    bpf_probe_read_user_str(e->pathname, sizeof(e->pathname), pathname);
+
+    e->dirfd = (__s32)ctx->args[0];
+    e->flags = (__u32)ctx->args[2];
+    e->mode = (__u32)ctx->args[3];
 
     bpf_ringbuf_submit(e, 0);
     return 0;
