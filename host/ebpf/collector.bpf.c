@@ -355,4 +355,182 @@ int trace_renameat2_exit(struct trace_event_raw_sys_exit *ctx)
 
 }
 
+/*-----------------------------------------------------------------*/
+/*------------------------------ FCHMOD ----------------------------*/
+/*-----------------------------------------------------------------*/
+
+static __always_inline int save_fchmod_event(__s32 dfd, const char *pathname,  __s32 mode,  __s32 flags, __u32 syscall_type)
+{
+    struct opening_event e = {};
+
+    e.header.type = EVENT_FCHMOD;
+
+    __u64 pid_tgid = bpf_get_current_pid_tgid();
+    e.header.pid = pid_tgid >> 32;
+    e.header.tid = pid_tgid & 0xffffffff;
+
+    e.header.uid = bpf_get_current_uid_gid() & 0xffffffff;
+    e.header.timestamp_ns = bpf_ktime_get_ns();
+
+    bpf_get_current_comm(e.header.comm, sizeof(e.header.comm));
+
+    if (pathname)
+        bpf_probe_read_user_str(e.pathname, sizeof(e.pathname), pathname);
+
+    e.dirfd = dfd;
+    e.flags = flags;
+    e.mode = mode;
+    e.header.syscall_type = syscall_type;
+
+    bpf_map_update_elem(&pending_fchmod_map, &e.header.tid, &e, BPF_ANY);
+
+    return 0;
+}
+
+SEC("tracepoint/syscalls/sys_enter_chmod")
+int trace_chmod(struct trace_event_raw_sys_enter *ctx)
+{
+    /*
+    filename: 0x%08lx, mode: 0x%08lx"
+    ((unsigned long)(REC->filename)), ((unsigned long)(REC->mode))
+    */
+    
+    return save_fchmod_event(
+        0,
+        (const char *)ctx->args[0],
+        (__u32)ctx->args[1],
+        0,
+        FCHMOD_SYSCALL
+    );
+}
+
+SEC("tracepoint/syscalls/sys_enter_fchmod")
+int trace_fchmod(struct trace_event_raw_sys_enter *ctx)
+{
+    /*
+    fd: 0x%08lx, mode: 0x%08lx
+    ((unsigned long)(REC->fd)), ((unsigned long)(REC->mode))
+    */
+    
+    return save_fchmod_event(
+        (__u32)ctx->args[0],
+        NULL,
+        (__u32)ctx->args[1],
+        0,
+        FCHMOD_SYSCALL
+    );
+}
+
+SEC("tracepoint/syscalls/sys_enter_fchmodat")
+int trace_fchmodat(struct trace_event_raw_sys_enter *ctx)
+{
+    /*
+    dfd: 0x%08lx, filename: 0x%08lx, mode: 0x%08lx
+    ((unsigned long)(REC->dfd)), ((unsigned long)(REC->filename)), ((unsigned long)(REC->mode))
+    */
+
+    return save_fchmod_event(
+        (__s32)ctx->args[0],
+        (const char *)ctx->args[1],
+        (__u32)ctx->args[2],
+        0,
+        FCHMODAT_SYSCALL
+    );
+}
+
+SEC("tracepoint/syscalls/sys_enter_fchmodat2")
+int trace_fchmodat2(struct trace_event_raw_sys_enter *ctx)
+{
+    /*
+    dfd: 0x%08lx, filename: 0x%08lx, mode: 0x%08lx, flags: 0x%08lx
+    ((unsigned long)(REC->dfd)), ((unsigned long)(REC->filename)), ((unsigned long)(REC->mode)), ((unsigned long)(REC->flags))
+    */
+
+    return save_fchmod_event(
+        (__s32)ctx->args[0],
+        (const char *)ctx->args[1],
+        (__u32)ctx->args[2],
+        (__u32)ctx->args[3],
+        FCHMODAT2_SYSCALL
+    );
+}
+
+static __always_inline int save_fchmod_event_exit(__s64 res, __u32 syscall_type)
+{
+    __u64 pid_tgid = bpf_get_current_pid_tgid();
+    __u32 tid = (__u32)pid_tgid;
+    
+    struct opening_event *pending = bpf_map_lookup_elem(&pending_fchmod_map, &tid);
+    if (!pending)
+        return 0;
+
+    struct opening_event *e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
+    if (!e) 
+    {
+        bpf_map_delete_elem(&pending_fchmod_map, &tid);
+        return 0;
+    }
+
+    e->header = pending->header;
+    
+    __builtin_memcpy(e->pathname, pending->pathname, sizeof(e->pathname));
+    
+    e->dirfd = pending->dirfd;
+    e->flags = pending->flags;
+    e->mode = pending->mode;
+    
+    e->header.type = EVENT_FCHMOD_EXIT;
+    e->header.res = res;
+
+    bpf_map_delete_elem(&pending_fchmod_map, &tid);
+
+    bpf_ringbuf_submit(e, 0);
+
+    return 0;
+}
+
+SEC("tracepoint/syscalls/sys_exit_chmod")
+int trace_chmod_exit(struct trace_event_raw_sys_exit *ctx)
+{
+    /*
+    0x%lx
+    REC->ret
+    */
+
+    return save_fchmod_event_exit((__s64)ctx->ret, CHMOD_SYSCALL);
+}
+
+SEC("tracepoint/syscalls/sys_exit_fchmod")
+int trace_fchmod_exit(struct trace_event_raw_sys_exit *ctx)
+{
+    /*
+    0x%lx
+    REC->ret
+    */
+
+    return save_fchmod_event_exit((__s64)ctx->ret, FCHMOD_SYSCALL);
+}
+
+SEC("tracepoint/syscalls/sys_exit_fchmodat")
+int trace_fchmodat_exit(struct trace_event_raw_sys_exit *ctx)
+{
+    /*
+    0x%lx
+    REC->ret
+    */
+
+    return save_fchmod_event_exit((__s64)ctx->ret, FCHMODAT_SYSCALL);
+}
+
+SEC("tracepoint/syscalls/sys_exit_fchmodat2")
+int trace_fchmodat2_exit(struct trace_event_raw_sys_exit *ctx)
+{
+    /*
+    0x%lx
+    REC->ret
+    */
+
+    return save_fchmod_event_exit((__s64)ctx->ret, FCHMODAT2_SYSCALL);
+}
+
 char LICENSE[] SEC("license") = "GPL";

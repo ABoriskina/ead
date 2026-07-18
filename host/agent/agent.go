@@ -28,11 +28,19 @@ type eventType uint32
 const (
 	eventExecve eventType = iota
 	eventConnect
+
 	eventOpenat
 	eventOpenatExit
+
 	eventRename
 	eventRenameExit
+
 	eventChmod
+	eventChmodExit
+
+	eventFchmod
+	eventFchmodExit
+
 	eventClone
 	eventUnlink
 )
@@ -87,6 +95,17 @@ type renamingEvent struct {
 	Olddirfd int32
 	Newdirfd int32
 	Flags    uint32
+}
+
+func resolveFDPath(pid uint32, fd int32) (string, error) {
+	procPath := fmt.Sprintf("/proc/%d/fd/%d", pid, fd)
+
+	path, err := os.Readlink(procPath)
+	if err != nil {
+		return "", err
+	}
+
+	return path, nil
 }
 
 func main() {
@@ -325,6 +344,40 @@ func handleEvent(data []byte) error {
 
 		if err := sendRenameEventToAnalyzer(&event); err != nil {
 			log.Printf("failed to send rename event to analyzer: %v", err)
+		}
+	case eventFchmodExit:
+		var event openingEvent
+
+		if err := binary.Read(
+			bytes.NewReader(data),
+			binary.LittleEndian,
+			&event,
+		); err != nil {
+			return err
+		}
+
+		pathname, err := resolveFDPath(
+			event.Header.Pid,
+			event.Dirfd,
+		)
+
+		if err == nil {
+			fmt.Printf(
+				"[EVENT_FCHMOD] pid=%d fd=%d file=%s mode=%04o res=%d\n",
+				event.Header.Pid,
+				event.Dirfd,
+				pathname,
+				event.Mode,
+				event.Header.Res,
+			)
+		} else {
+			fmt.Printf(
+				"[EVENT_(F)CHMOD] pid=%d fd=%d file=<unresolved> mode=%04o res=%d\n",
+				event.Header.Pid,
+				event.Dirfd,
+				event.Mode,
+				event.Header.Res,
+			)
 		}
 	}
 

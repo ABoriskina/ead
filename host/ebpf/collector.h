@@ -12,11 +12,19 @@ enum event_type
 {
     EVENT_EXECVE,
     EVENT_CONNECT,
+
     EVENT_OPENAT,
     EVENT_OPENAT_EXIT,
+
     EVENT_RENAME,
     EVENT_RENAME_EXIT,
+
     EVENT_CHMOD,
+    EVENT_CHMOD_EXIT,
+
+    EVENT_FCHMOD,
+    EVENT_FCHMOD_EXIT,
+
     EVENT_CLONE,
     EVENT_UNLINK,
 };
@@ -25,9 +33,16 @@ enum syscall_types
 {
     OPEN_SYSCALL,
     OPENAT_SYSCALL,
+
     RENAME_SYSCALL,
     RENAMEAT_SYSCALL,
     RENAMEAT2_SYSCALL,
+
+    CHMOD_SYSCALL,
+
+    FCHMOD_SYSCALL,
+    FCHMODAT_SYSCALL,
+    FCHMODAT2_SYSCALL,
 };
 
 struct events_header
@@ -59,11 +74,11 @@ struct execution_event
     char argv[128];
 };
 
-struct opening_event
+struct opening_event // fchmod uses the same struct
 {
     struct events_header header;
     char pathname[MAX_PATH_LEN];
-    __s32 dirfd;
+    __s32 dirfd; // fchmod fd
     __u32 flags;
     __u32 mode;
     __u64 duration_ns;
@@ -84,6 +99,13 @@ struct renaming_event
     __s32 olddirfd;
     __s32 newdirfd;
     __u32 flags;
+};
+
+struct chmod_event
+{
+    struct events_header header;
+    char filename[MAX_PATH_LEN];
+    __u32 mode;
 };
 
 struct
@@ -132,3 +154,11 @@ struct
     __type(key, __u32);
     __type(value, struct renaming_event);
 } rename_scratch_map SEC(".maps");
+
+struct
+{
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 16384);
+    __type(key, __u32);
+    __type(value, struct opening_event);
+} pending_fchmod_map SEC(".maps");
