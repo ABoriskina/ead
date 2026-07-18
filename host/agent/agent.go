@@ -46,8 +46,11 @@ type eventsHeader struct {
 
 	TimestampNs uint64
 	Res         int64
+	SyscallType uint32
 
 	Comm [taskCommLen]byte
+
+	_ uint32
 }
 
 type tcpConnectionEvent struct {
@@ -81,10 +84,9 @@ type renamingEvent struct {
 	Oldname [maxPathLen]byte
 	Newname [maxPathLen]byte
 
-	Olddirfd    int32
-	Newdirfd    int32
-	Flags       uint32
-	SyscallType uint32
+	Olddirfd int32
+	Newdirfd int32
+	Flags    uint32
 }
 
 func main() {
@@ -317,7 +319,7 @@ func handleEvent(data []byte) error {
 			event.Olddirfd,
 			event.Newdirfd,
 			event.Flags,
-			event.SyscallType,
+			event.Header.SyscallType,
 			event.Header.Res,
 		)
 

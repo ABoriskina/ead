@@ -23,6 +23,8 @@ enum event_type
 
 enum syscall_types
 {
+    OPEN_SYSCALL,
+    OPENAT_SYSCALL,
     RENAME_SYSCALL,
     RENAMEAT_SYSCALL,
     RENAMEAT2_SYSCALL,
@@ -36,6 +38,7 @@ struct events_header
     __u32 uid;
     __u64 timestamp_ns;
     __s64 res;
+    __u32 syscall_type;
     char comm[TASK_COMM_LEN];
 };
 
@@ -81,7 +84,6 @@ struct renaming_event
     __s32 olddirfd;
     __s32 newdirfd;
     __u32 flags;
-    __u32 syscall_type;
 };
 
 struct

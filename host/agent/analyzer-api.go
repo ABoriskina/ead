@@ -221,7 +221,7 @@ func sendRenameEventToAnalyzer(e *renamingEvent) error {
 		Olddirfd:    e.Olddirfd,
 		Newdirfd:    e.Newdirfd,
 		Flags:       e.Flags,
-		SyscallType: e.SyscallType,
+		SyscallType: e.Header.SyscallType,
 		Result:      e.Header.Res,
 
 		Process: analyzerProcess{
