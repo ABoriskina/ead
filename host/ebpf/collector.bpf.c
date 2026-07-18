@@ -99,26 +99,29 @@ int trace_openat(struct trace_event_raw_sys_enter *ctx)
     ((unsigned long)(REC->dfd)), ((unsigned long)(REC->filename)), ((unsigned long)(REC->flags)), ((unsigned long)(REC->mode))
     */
 
-    if (!ctx->args[1])
-        return 0;
+    struct pending_openat pending = {};
+
+    pending.o_event.header.type = EVENT_OPENAT;
+
+    __u64 pid_tgid = bpf_get_current_pid_tgid();
+    pending.o_event.header.pid = pid_tgid >> 32;
+    pending.o_event.header.tid = pid_tgid & 0xffffffff;
+
+    pending.o_event.header.uid = bpf_get_current_uid_gid() & 0xffffffff;
+    pending.o_event.header.timestamp_ns = bpf_ktime_get_ns();
+
+    bpf_get_current_comm(pending.o_event.header.comm, sizeof(pending.o_event.header.comm));
+
     const char *pathname = (const char *)ctx->args[1];
+    bpf_probe_read_user_str(pending.o_event.pathname, sizeof(pending.o_event.pathname), pathname);
 
-    struct opening_event *e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
-    if (!e)
-        return 0;
+    pending.o_event.dirfd = (__s32)ctx->args[0];
+    pending.o_event.flags = (__u32)ctx->args[2];
+    pending.o_event.mode = (__u32)ctx->args[3];
+    pending.start_time_ns = bpf_ktime_get_ns();
 
-    e->header.type = EVENT_OPENAT;
-    e->header.pid = bpf_get_current_pid_tgid() >> 32;
-    e->header.uid = bpf_get_current_uid_gid() & 0xffffffff;
+    bpf_map_update_elem(&pending_openat_map, &pending.o_event.header.tid, &pending, BPF_ANY);
 
-    bpf_get_current_comm(&e->header.comm, sizeof(e->header.comm));
-    bpf_probe_read_user_str(e->pathname, sizeof(e->pathname), pathname);
-
-    e->dirfd = (__s32)ctx->args[0];
-    e->flags = (__u32)ctx->args[2];
-    e->mode = (__u32)ctx->args[3];
-
-    bpf_ringbuf_submit(e, 0);
     return 0;
 }
 
@@ -130,20 +133,36 @@ int trace_openat_exit(struct trace_event_raw_sys_exit *ctx)
     0x%lx
     REC->ret
     */
-
-    struct events_header *e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
-    if (!e)
+    __u64 pid_tgid = bpf_get_current_pid_tgid();
+    __u32 tid = (__u32)pid_tgid;
+    
+    struct pending_openat *pending = bpf_map_lookup_elem(&pending_openat_map, &tid);
+    if (!pending)
         return 0;
 
-    e->type = EVENT_OPENAT_EXIT;
-    e->pid = bpf_get_current_pid_tgid() >> 32;
-    e->uid = bpf_get_current_uid_gid() & 0xffffffff;
+    struct opening_event *e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
+    if (!e) 
+    {
+        bpf_map_delete_elem(&pending_openat_map, &tid);
+        return 0;
+    }
 
-    bpf_get_current_comm(&e->comm, sizeof(e->comm));
+    e->header = pending->o_event.header;
+    
+    __builtin_memcpy(e->pathname, pending->o_event.pathname, sizeof(e->pathname));
+    
+    e->dirfd = pending->o_event.dirfd;
+    e->flags = pending->o_event.flags;
+    e->mode = pending->o_event.mode;
 
-    e->res = (__u64)ctx->ret;
+    e->header.type = EVENT_OPENAT_EXIT;
+    e->header.res = (__u64)ctx->ret;
+    e->duration_ns = bpf_ktime_get_ns() - pending->start_time_ns;
+
+    bpf_map_delete_elem(&pending_openat_map, &tid);
 
     bpf_ringbuf_submit(e, 0);
+
     return 0;
 }
 

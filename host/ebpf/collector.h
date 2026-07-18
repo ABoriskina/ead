@@ -23,6 +23,7 @@ struct events_header
 {
     __u32 type;
     __u32 pid;
+    __u32 tid;
     __u32 uid;
     __u64 timestamp_ns;
     __u64 res;
@@ -53,6 +54,13 @@ struct opening_event
     __s32 dirfd;
     __u32 flags;
     __u32 mode;
+    __u64 duration_ns;
+};
+
+struct pending_openat
+{
+    struct opening_event o_event;
+    __u64 start_time_ns;
 };
 
 struct renaming_event
@@ -86,3 +94,11 @@ struct
     __type(key, __u32);
     __type(value, __u16);
 } execution_config SEC(".maps");
+
+struct
+{
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 16384);
+    __type(key, __u32);
+    __type(value, struct pending_openat);
+} pending_openat_map SEC(".maps");

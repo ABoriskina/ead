@@ -71,6 +71,8 @@ type openingEvent struct {
 	Dirfd    int32
 	Flags    uint32
 	Mode     uint32
+
+	DurationNs uint64
 }
 
 func main() {
@@ -226,7 +228,7 @@ func handleEvent(data []byte) error {
 			log.Printf("failed to send execve event to analyzer: %v", err)
 		}
 
-	case eventOpenat:
+	case eventOpenat: // TODELETE: Not used
 		var event openingEvent
 
 		if err := binary.Read(
@@ -253,7 +255,7 @@ func handleEvent(data []byte) error {
 			log.Printf("failed to send openat event to analyzer: %v", err)
 		}
 	case eventOpenatExit:
-		var event eventsHeader
+		var event openingEvent
 
 		if err := binary.Read(
 			bytes.NewReader(data),
@@ -263,16 +265,22 @@ func handleEvent(data []byte) error {
 			return err
 		}
 
+		// TODO: too much noise
 		fmt.Printf(
-			"[EVENT_OPENAT_EXIT] pid=%d uid=%d comm=%s res=0x%08x\n",
-			event.Pid,
-			event.Uid,
-			cString(event.Comm[:]),
-			event.Res,
+			"[EVENT_OPENAT] pid=%d uid=%d comm=%s file=%s dirfd=%d flags=%d mode=%d res=%d duration=%d\n",
+			event.Header.Pid,
+			event.Header.Uid,
+			cString(event.Header.Comm[:]),
+			cString(event.Pathname[:]),
+			event.Dirfd,
+			event.Flags,
+			event.Mode,
+			int64(event.Header.Res),
+			event.DurationNs,
 		)
 
-		if err := sendOpenatExitEventToAnalyzer(&event); err != nil {
-			log.Printf("failed to send openat exit event to analyzer: %v", err)
+		if err := sendOpenatEventToAnalyzer(&event); err != nil {
+			log.Printf("failed to send openat event to analyzer: %v", err)
 		}
 	}
 

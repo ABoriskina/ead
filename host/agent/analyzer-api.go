@@ -60,24 +60,15 @@ type analyzerOpenatEvent struct {
 	Host      string `json:"host"`
 	Proto     string `json:"proto"`
 
-	Pathname string `json:"pathname"`
-	Dirfd    int32  `json:"dirfd"`
-	Flags    uint32 `json:"flags"`
-	Mode     uint32 `json:"mode"`
+	Pathname   string `json:"pathname"`
+	Dirfd      int32  `json:"dirfd"`
+	Flags      uint32 `json:"flags"`
+	Mode       uint32 `json:"mode"`
+	Result     int64  `json:"result"`
+	DurationNs uint64 `json:"duration_ns"`
 
 	Process analyzerProcess `json:"process"`
 	Flow    analyzerFlow    `json:"flow"`
-}
-
-type analyzerOpenatExitEvent struct {
-	Timestamp string `json:"timestamp"`
-	EventType string `json:"event_type"`
-	Sensor    string `json:"sensor"`
-	Host      string `json:"host"`
-
-	Result uint64 `json:"result"`
-
-	Process analyzerProcess `json:"process"`
 }
 
 func getTimestamp() string {
@@ -175,10 +166,12 @@ func sendOpenatEventToAnalyzer(e *openingEvent) error {
 		Host:      "localhost",
 		Proto:     "TCP",
 
-		Pathname: cString(e.Pathname[:]),
-		Dirfd:    e.Dirfd,
-		Flags:    e.Flags,
-		Mode:     e.Mode,
+		Pathname:   cString(e.Pathname[:]),
+		Dirfd:      e.Dirfd,
+		Flags:      e.Flags,
+		Mode:       e.Mode,
+		Result:     int64(e.Header.Res),
+		DurationNs: e.DurationNs,
 
 		Process: analyzerProcess{
 			Pid:  e.Header.Pid,
@@ -187,28 +180,6 @@ func sendOpenatEventToAnalyzer(e *openingEvent) error {
 
 		Flow: analyzerFlow{
 			State: "established",
-		},
-	}
-
-	return sendAnalyzerEvent(event)
-}
-
-func sendOpenatExitEventToAnalyzer(e *eventsHeader) error {
-	if analyzerConn == nil {
-		return nil
-	}
-
-	event := analyzerOpenatExitEvent{
-		Timestamp: getTimestamp(),
-		EventType: "openat_exit",
-		Sensor:    "ebpf-anomaly-detector",
-		Host:      "localhost",
-
-		Result: e.Res,
-
-		Process: analyzerProcess{
-			Pid:  e.Pid,
-			Comm: cString(e.Comm[:]),
 		},
 	}
 
