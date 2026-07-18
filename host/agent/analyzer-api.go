@@ -71,6 +71,19 @@ type analyzerOpenatEvent struct {
 	Flow    analyzerFlow    `json:"flow"`
 }
 
+type analyzerRenameEvent struct {
+	Timestamp string `json:"timestamp"`
+	EventType string `json:"event_type"`
+	Sensor    string `json:"sensor"`
+	Host      string `json:"host"`
+
+	Oldname string `json:"oldname"`
+	Newname string `json:"newname"`
+	Result  int64  `json:"result"`
+
+	Process analyzerProcess `json:"process"`
+}
+
 func getTimestamp() string {
 	return time.Now().
 		UTC().
@@ -180,6 +193,30 @@ func sendOpenatEventToAnalyzer(e *openingEvent) error {
 
 		Flow: analyzerFlow{
 			State: "established",
+		},
+	}
+
+	return sendAnalyzerEvent(event)
+}
+
+func sendRenameEventToAnalyzer(e *renamingEvent) error {
+	if analyzerConn == nil {
+		return nil
+	}
+
+	event := analyzerRenameEvent{
+		Timestamp: getTimestamp(),
+		EventType: "rename",
+		Sensor:    "ebpf-anomaly-detector",
+		Host:      "localhost",
+
+		Oldname: cString(e.Oldname[:]),
+		Newname: cString(e.Newname[:]),
+		Result:  e.Header.Res,
+
+		Process: analyzerProcess{
+			Pid:  e.Header.Pid,
+			Comm: cString(e.Header.Comm[:]),
 		},
 	}
 

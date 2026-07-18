@@ -56,7 +56,11 @@ int trace_execution(struct trace_event_raw_sys_enter *ctx)
 {
     /*args[0] = filename
     args[1] = argv
-    args[2] = envp*/
+    args[2] = envp
+
+    filename: 0x%08lx, argv: 0x%08lx, envp: 0x%08lx
+    ((unsigned long)(REC->filename)), ((unsigned long)(REC->argv)), ((unsigned long)(REC->envp))
+    */
 
     if (!ctx->args[0])
         return 0;
@@ -156,10 +160,91 @@ int trace_openat_exit(struct trace_event_raw_sys_exit *ctx)
     e->mode = pending->o_event.mode;
 
     e->header.type = EVENT_OPENAT_EXIT;
-    e->header.res = (__u64)ctx->ret;
+    e->header.res = (__s64)ctx->ret;
     e->duration_ns = bpf_ktime_get_ns() - pending->start_time_ns;
 
     bpf_map_delete_elem(&pending_openat_map, &tid);
+
+    bpf_ringbuf_submit(e, 0);
+
+    return 0;
+}
+
+/*-----------------------------------------------------------------*/
+/*---------------------------- RENAMING ---------------------------*/
+/*-----------------------------------------------------------------*/
+SEC("tracepoint/syscalls/sys_enter_rename")
+int trace_rename(struct trace_event_raw_sys_enter *ctx)
+{
+    /*
+    oldname: 0x%08lx, newname: 0x%08lx"
+    ((unsigned long)(REC->oldname)), ((unsigned long)(REC->newname))
+    */
+
+    if (ctx->args[0] == 0 || ctx->args[1] == 0)
+        return 0;
+    const char *oldname = (const char *)ctx->args[0];
+    const char *newname = (const char *)ctx->args[1];
+
+    __u32 zero = 0;
+
+    struct renaming_event *e = bpf_map_lookup_elem(&rename_scratch_map, &zero);
+    if (!e)
+        return 0;
+
+    __builtin_memset(e, 0, sizeof(*e));
+
+    e->header.type = EVENT_RENAME;
+
+    __u64 pid_tgid = bpf_get_current_pid_tgid();
+    e->header.pid = pid_tgid >> 32;
+    e->header.tid = pid_tgid & 0xffffffff;
+
+    e->header.uid = bpf_get_current_uid_gid() & 0xffffffff;
+
+    bpf_get_current_comm(e->header.comm, sizeof(e->header.comm));
+
+    long oldname_len = bpf_probe_read_user_str(e->oldname, sizeof(e->oldname), oldname);
+    if (oldname_len < 0)
+        return 0;
+
+    long newname_len = bpf_probe_read_user_str(e->newname, sizeof(e->newname), newname);
+    if (newname_len < 0)
+        return 0;
+
+    bpf_map_update_elem(&pending_rename_map, &e->header.tid, e, BPF_ANY);
+
+    return 0;
+}
+
+SEC("tracepoint/syscalls/sys_exit_rename")
+int trace_rename_exit(struct trace_event_raw_sys_exit *ctx)
+{
+    /*
+    0x%lx
+    REC->ret
+    */
+
+    __u64 pid_tgid = bpf_get_current_pid_tgid();
+    __u32 tid = (__u32)pid_tgid;
+    
+    struct renaming_event *pending = bpf_map_lookup_elem(&pending_rename_map, &tid);
+    if (!pending)
+        return 0;
+
+    struct renaming_event *e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
+    if (!e) 
+    {
+        bpf_map_delete_elem(&pending_rename_map, &tid);
+        return 0;
+    }
+
+    *e = *pending;
+
+    e->header.type = EVENT_RENAME_EXIT;
+    e->header.res = (__s64)ctx->ret;
+    
+    bpf_map_delete_elem(&pending_rename_map, &tid);
 
     bpf_ringbuf_submit(e, 0);
 

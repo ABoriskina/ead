@@ -14,6 +14,7 @@ enum event_type
     EVENT_OPENAT,
     EVENT_OPENAT_EXIT,
     EVENT_RENAME,
+    EVENT_RENAME_EXIT,
     EVENT_CHMOD,
     EVENT_CLONE,
     EVENT_UNLINK,
@@ -26,7 +27,7 @@ struct events_header
     __u32 tid;
     __u32 uid;
     __u64 timestamp_ns;
-    __u64 res;
+    __s64 res;
     char comm[TASK_COMM_LEN];
 };
 
@@ -66,10 +67,8 @@ struct pending_openat
 struct renaming_event
 {
     struct events_header header;
-    char pathname[MAX_PATH_LEN];
-    __s32 dirfd;
-    __u32 flags;
-    __u32 mode;
+    char oldname[MAX_PATH_LEN];
+    char newname[MAX_PATH_LEN];
 };
 
 struct
@@ -102,3 +101,19 @@ struct
     __type(key, __u32);
     __type(value, struct pending_openat);
 } pending_openat_map SEC(".maps");
+
+struct
+{
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 16384);
+    __type(key, __u32);
+    __type(value, struct renaming_event);
+} pending_rename_map SEC(".maps");
+
+struct
+{
+    __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
+    __uint(max_entries, 1);
+    __type(key, __u32);
+    __type(value, struct renaming_event);
+} rename_scratch_map SEC(".maps");

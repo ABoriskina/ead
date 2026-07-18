@@ -30,10 +30,11 @@ const (
 	eventConnect
 	eventOpenat
 	eventOpenatExit
-	eventUnlink
 	eventRename
+	eventRenameExit
 	eventChmod
 	eventClone
+	eventUnlink
 )
 
 type eventsHeader struct {
@@ -44,7 +45,7 @@ type eventsHeader struct {
 	_ uint32
 
 	TimestampNs uint64
-	Res         uint64
+	Res         int64
 
 	Comm [taskCommLen]byte
 }
@@ -73,6 +74,12 @@ type openingEvent struct {
 	Mode     uint32
 
 	DurationNs uint64
+}
+
+type renamingEvent struct {
+	Header  eventsHeader
+	Oldname [maxPathLen]byte
+	Newname [maxPathLen]byte
 }
 
 func main() {
@@ -281,6 +288,32 @@ func handleEvent(data []byte) error {
 
 		if err := sendOpenatEventToAnalyzer(&event); err != nil {
 			log.Printf("failed to send openat event to analyzer: %v", err)
+		}
+
+	case eventRenameExit:
+		var event renamingEvent
+
+		if err := binary.Read(
+			bytes.NewReader(data),
+			binary.LittleEndian,
+			&event,
+		); err != nil {
+			return err
+		}
+
+		// TODO: too much noise
+		fmt.Printf(
+			"[EVENT_RENAME] pid=%d uid=%d comm=%s oldname=%s newname=%s res=%d\n",
+			event.Header.Pid,
+			event.Header.Uid,
+			cString(event.Header.Comm[:]),
+			cString(event.Oldname[:]),
+			cString(event.Newname[:]),
+			event.Header.Res,
+		)
+
+		if err := sendRenameEventToAnalyzer(&event); err != nil {
+			log.Printf("failed to send rename event to analyzer: %v", err)
 		}
 	}
 
