@@ -29,8 +29,11 @@ enum event_type
     EVENT_FCHMOD,
     EVENT_FCHMOD_EXIT,
 
-    EVENT_CLONE,
     EVENT_UNLINK,
+    EVENT_UNLINK_EXIT,
+
+    EVENT_CLONE,
+
 };
 
 enum syscall_types
@@ -50,6 +53,9 @@ enum syscall_types
     FCHMOD_SYSCALL,
     FCHMODAT_SYSCALL,
     FCHMODAT2_SYSCALL,
+
+    UNLINK_SYSCALL,
+    UNLINKAT_SYSCALL
 };
 
 struct events_header
@@ -110,6 +116,14 @@ struct renaming_event
     __u32 flags;
 };
 
+struct unlinking_event
+{
+    struct events_header header;
+    char pathname[MAX_PATH_LEN];
+    __s32 fd;
+    __u32 flags;
+};
+
 struct
 {
     __uint(type, BPF_MAP_TYPE_RINGBUF);
@@ -148,6 +162,14 @@ struct
     __type(key, __u32);
     __type(value, struct renaming_event);
 } pending_rename_map SEC(".maps");
+
+struct
+{
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 16384);
+    __type(key, __u32);
+    __type(value, struct unlinking_event);
+} pending_unlink_map SEC(".maps");
 
 struct
 {

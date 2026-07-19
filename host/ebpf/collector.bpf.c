@@ -157,7 +157,7 @@ static __always_inline int save_execve_event_exit(__s64 res, __u32 syscall_type)
 
     *e = *pending;
 
-    e->header.type = EVENT_EXECVE;
+    e->header.type = EVENT_EXECVE_EXIT;
     e->header.res = res;
 
     bpf_map_delete_elem(&pending_execve_map, &tid);
@@ -636,6 +636,120 @@ int trace_fchmodat2_exit(struct trace_event_raw_sys_exit *ctx)
     */
 
     return save_fchmod_event_exit((__s64)ctx->ret, FCHMODAT2_SYSCALL);
+}
+
+/*-----------------------------------------------------------------*/
+/*----------------------------- UNLINK ----------------------------*/
+/*-----------------------------------------------------------------*/
+static __always_inline int save_unlink_event(__s32 fd, const char *pathname, __s32 flags,  __u32 syscall_type)
+{
+    struct unlinking_event pending = {};
+
+    pending.header.type = EVENT_UNLINK;
+
+    __u64 pid_tgid = bpf_get_current_pid_tgid();
+    pending.header.pid = pid_tgid >> 32;
+    pending.header.tid = pid_tgid & 0xffffffff;
+
+    pending.header.uid = bpf_get_current_uid_gid() & 0xffffffff;
+    pending.header.timestamp_ns = bpf_ktime_get_ns();
+
+    bpf_get_current_comm(pending.header.comm, sizeof(pending.header.comm));
+
+    bpf_probe_read_user_str(pending.pathname, sizeof(pending.pathname), pathname);
+
+    pending.fd = fd;
+    pending.flags = flags;
+    pending.header.syscall_type = syscall_type;
+
+    bpf_map_update_elem(&pending_unlink_map, &pending.header.tid, &pending, BPF_ANY);
+
+    return 0;
+}
+
+SEC("tracepoint/syscalls/sys_enter_unlink")
+int trace_unlink(struct trace_event_raw_sys_enter *ctx)
+{
+    /*
+    pathname: 0x%08lx
+    ((unsigned long)(REC->pathname))
+    */
+
+    return save_unlink_event(
+        AT_FDCWD,
+        (const char *)ctx->args[0],
+        0,
+        UNLINK_SYSCALL
+    );
+}
+
+SEC("tracepoint/syscalls/sys_enter_unlinkat")
+int trace_unlinkat(struct trace_event_raw_sys_enter *ctx)
+{
+    /*
+    dfd: 0x%08lx, pathname: 0x%08lx, flag: 0x%08lx
+    ((unsigned long)(REC->dfd)), ((unsigned long)(REC->pathname)), ((unsigned long)(REC->flag))
+    */
+
+    return save_unlink_event(
+        (__s32)ctx->args[0],
+        (const char *)ctx->args[1],
+        (__u32)ctx->args[2],
+        UNLINKAT_SYSCALL
+    );
+}
+
+static __always_inline int save_unlink_event_exit(__s64 res, __u32 syscall_type)
+{
+    __u64 pid_tgid = bpf_get_current_pid_tgid();
+    __u32 tid = (__u32)pid_tgid;
+    
+    struct unlinking_event *pending = bpf_map_lookup_elem(&pending_unlink_map, &tid);
+    if (!pending)
+        return 0;
+
+    struct unlinking_event *e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
+    if (!e) 
+    {
+        bpf_map_delete_elem(&pending_unlink_map, &tid);
+        return 0;
+    }
+
+    e->header = pending->header;
+    
+    __builtin_memcpy(e->pathname, pending->pathname, sizeof(e->pathname));
+    
+    e->fd = pending->fd;
+    e->flags = pending->flags;
+    
+    e->header.type = EVENT_UNLINK_EXIT;
+    e->header.res = res;
+
+    bpf_map_delete_elem(&pending_unlink_map, &tid);
+
+    bpf_ringbuf_submit(e, 0);
+}
+
+SEC("tracepoint/syscalls/sys_exit_unlink")
+int trace_unlink_exit(struct trace_event_raw_sys_exit *ctx)
+{
+    /*
+    0x%lx
+    REC->ret
+    */
+
+    return save_unlink_event_exit((__s64)ctx->ret, UNLINK_SYSCALL);
+}
+
+SEC("tracepoint/syscalls/sys_exit_unlinkat")
+int trace_unlinkat_exit(struct trace_event_raw_sys_exit *ctx)
+{
+    /*
+    0x%lx
+    REC->ret
+    */
+
+    return save_unlink_event_exit((__s64)ctx->ret, UNLINKAT_SYSCALL);
 }
 
 char LICENSE[] SEC("license") = "GPL";

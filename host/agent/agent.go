@@ -45,16 +45,17 @@ const (
 	eventFchmod
 	eventFchmodExit
 
-	eventClone
 	eventUnlink
+	eventUnlinkExit
+
+	eventClone
 )
 
 type eventsHeader struct {
 	Type eventType
 	Pid  uint32
+	Tid  uint32
 	Uid  uint32
-
-	_ uint32
 
 	TimestampNs uint64
 	Res         int64
@@ -102,6 +103,13 @@ type renamingEvent struct {
 
 	Olddirfd int32
 	Newdirfd int32
+	Flags    uint32
+}
+
+type unlinkingEvent struct {
+	Header   eventsHeader
+	Pathname [maxPathLen]byte
+	Fd       int32
 	Flags    uint32
 }
 
@@ -245,7 +253,7 @@ func handleEvent(data []byte) error {
 			log.Printf("failed to send connect event to analyzer: %v", err)
 		}
 
-	case eventExecve:
+	case eventExecveExit:
 		var event executionEvent
 
 		if err := binary.Read(
@@ -373,7 +381,7 @@ func handleEvent(data []byte) error {
 
 		if err == nil {
 			fmt.Printf(
-				"[EVENT_FCHMOD] pid=%d fd=%d file=%s mode=%04o res=%d\n",
+				"[EVENT_(F)CHMOD] pid=%d fd=%d file=%s mode=%04o res=%d\n",
 				event.Header.Pid,
 				event.Dirfd,
 				pathname,
@@ -389,6 +397,30 @@ func handleEvent(data []byte) error {
 				event.Header.Res,
 			)
 		}
+		// TODO: send event
+
+	case eventUnlinkExit:
+		var event unlinkingEvent
+
+		if err := binary.Read(
+			bytes.NewReader(data),
+			binary.LittleEndian,
+			&event,
+		); err != nil {
+			return err
+		}
+
+		fmt.Printf(
+			"[EVENT_UNLINK] pid=%d uid=%d comm=%s file=%s fd=%d flags=%d res=%d\n",
+			event.Header.Pid,
+			event.Header.Uid,
+			cString(event.Header.Comm[:]),
+			cString(event.Pathname[:]),
+			event.Fd,
+			event.Flags,
+			event.Header.Res,
+		)
+		// TODO: send event
 	}
 
 	return nil
