@@ -34,14 +34,13 @@ enum event_type
 
     EVENT_CLONE,
     EVENT_CLONE_EXIT,
-
 };
 
 enum syscall_types
 {
     EXECVE_SYSCALL,
     EXECVEAT_SYSCALL,
-    
+
     OPEN_SYSCALL,
     OPENAT_SYSCALL,
 

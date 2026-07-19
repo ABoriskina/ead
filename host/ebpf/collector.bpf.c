@@ -52,7 +52,8 @@ int trace_tcp_state(struct trace_event_raw_inet_sock_set_state *ctx)
 /*--------------------------- EXECUTION ---------------------------*/
 /*-----------------------------------------------------------------*/
 
-static __always_inline int save_execve_event(__s32 fd, const char *pathname, const char *const *argv, __u32 flags, __u32 syscall_type)
+static __always_inline int save_execve_event(__s32 fd, const char *pathname, const char *const *argv, __u32 flags,
+                                             __u32 syscall_type)
 {
     if (!pathname)
         return 0;
@@ -88,7 +89,7 @@ static __always_inline int save_execve_event(__s32 fd, const char *pathname, con
 
     if (argv)
     {
-        #pragma unroll
+#pragma unroll
         for (int i = 0; i < MAX_ARGS; i++)
         {
             const char *argument = 0;
@@ -113,13 +114,8 @@ int trace_execve(struct trace_event_raw_sys_enter *ctx)
     ((unsigned long)(REC->filename)), ((unsigned long)(REC->argv)), ((unsigned long)(REC->envp))
     */
 
-    return save_execve_event(
-        AT_FDCWD,
-        (const char *)ctx->args[0],
-        (const char *const *)ctx->args[1],
-        0,
-        EXECVE_SYSCALL
-    );
+    return save_execve_event(AT_FDCWD, (const char *)ctx->args[0], (const char *const *)ctx->args[1], 0,
+                             EXECVE_SYSCALL);
 }
 
 SEC("tracepoint/syscalls/sys_enter_execveat")
@@ -127,16 +123,12 @@ int trace_execveat(struct trace_event_raw_sys_enter *ctx)
 {
     /*
     fd: 0x%08lx, filename: 0x%08lx, argv: 0x%08lx, envp: 0x%08lx, flags: 0x%08lx
-    ((unsigned long)(REC->fd)), ((unsigned long)(REC->filename)), ((unsigned long)(REC->argv)), ((unsigned long)(REC->envp)), ((unsigned long)(REC->flags))
+    ((unsigned long)(REC->fd)), ((unsigned long)(REC->filename)), ((unsigned long)(REC->argv)), ((unsigned
+    long)(REC->envp)), ((unsigned long)(REC->flags))
     */
 
-    return save_execve_event(
-        (__s32)ctx->args[0],
-        (const char *)ctx->args[1],
-        (const char *const *)ctx->args[2],
-        (__u32)ctx->args[4],
-        EXECVEAT_SYSCALL
-    );
+    return save_execve_event((__s32)ctx->args[0], (const char *)ctx->args[1], (const char *const *)ctx->args[2],
+                             (__u32)ctx->args[4], EXECVEAT_SYSCALL);
 }
 
 static __always_inline int save_execve_event_exit(__s64 res, __u32 syscall_type)
@@ -228,56 +220,47 @@ int trace_open(struct trace_event_raw_sys_enter *ctx)
     ((unsigned long)(REC->filename)), ((unsigned long)(REC->flags)), ((unsigned long)(REC->mode))
     */
 
-    return save_open_event(
-        AT_FDCWD,
-        (const char *)ctx->args[0],
-        (__u32)ctx->args[1],
-        (__u32)ctx->args[2],
-        OPEN_SYSCALL
-    );
+    return save_open_event(AT_FDCWD, (const char *)ctx->args[0], (__u32)ctx->args[1], (__u32)ctx->args[2],
+                           OPEN_SYSCALL);
 }
 
 SEC("tracepoint/syscalls/sys_enter_openat")
 int trace_openat(struct trace_event_raw_sys_enter *ctx)
 {
     /*
-    dfd: 0x%08lx, filename: 0x%08lx, flags: 0x%08lx, mode: 0x%08lx 
-    ((unsigned long)(REC->dfd)), ((unsigned long)(REC->filename)), ((unsigned long)(REC->flags)), ((unsigned long)(REC->mode))
+    dfd: 0x%08lx, filename: 0x%08lx, flags: 0x%08lx, mode: 0x%08lx
+    ((unsigned long)(REC->dfd)), ((unsigned long)(REC->filename)), ((unsigned long)(REC->flags)), ((unsigned
+    long)(REC->mode))
     */
 
-    return save_open_event(
-        (__s32)ctx->args[0],
-        (const char *)ctx->args[1],
-        (__u32)ctx->args[2],
-        (__u32)ctx->args[3],
-        OPENAT_SYSCALL
-    );
+    return save_open_event((__s32)ctx->args[0], (const char *)ctx->args[1], (__u32)ctx->args[2], (__u32)ctx->args[3],
+                           OPENAT_SYSCALL);
 }
 
 static __always_inline int save_open_event_exit(__s64 res, __u32 syscall_type)
 {
     __u64 pid_tgid = bpf_get_current_pid_tgid();
     __u32 tid = (__u32)pid_tgid;
-    
+
     struct pending_openat *pending = bpf_map_lookup_elem(&pending_openat_map, &tid);
     if (!pending)
         return 0;
 
     struct opening_event *e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
-    if (!e) 
+    if (!e)
     {
         bpf_map_delete_elem(&pending_openat_map, &tid);
         return 0;
     }
 
     e->header = pending->o_event.header;
-    
+
     __builtin_memcpy(e->pathname, pending->o_event.pathname, sizeof(e->pathname));
-    
+
     e->dirfd = pending->o_event.dirfd;
     e->flags = pending->o_event.flags;
     e->mode = pending->o_event.mode;
-    
+
     e->header.type = EVENT_OPENAT_EXIT;
     e->header.res = res;
 
@@ -313,8 +296,8 @@ int trace_openat_exit(struct trace_event_raw_sys_exit *ctx)
 /*-----------------------------------------------------------------*/
 /*---------------------------- RENAMING ---------------------------*/
 /*-----------------------------------------------------------------*/
-static __always_inline int save_rename_event(const char *oldname, const char *newname,
-    __s32 olddirfd, __s32 newdirfd, __u32 flags, __u32 syscall_type)
+static __always_inline int save_rename_event(const char *oldname, const char *newname, __s32 olddirfd, __s32 newdirfd,
+                                             __u32 flags, __u32 syscall_type)
 {
     if (!oldname || !newname)
         return 0;
@@ -357,13 +340,8 @@ int trace_rename(struct trace_event_raw_sys_enter *ctx)
     oldname: 0x%08lx, newname: 0x%08lx"
     ((unsigned long)(REC->oldname)), ((unsigned long)(REC->newname))
     */
-    return save_rename_event(
-        (const char *)ctx->args[0],
-        (const char *)ctx->args[1],
-        AT_FDCWD,
-        AT_FDCWD,
-        0,
-        RENAME_SYSCALL);
+    return save_rename_event((const char *)ctx->args[0], (const char *)ctx->args[1], AT_FDCWD, AT_FDCWD, 0,
+                             RENAME_SYSCALL);
 }
 
 SEC("tracepoint/syscalls/sys_enter_renameat")
@@ -371,15 +349,11 @@ int trace_renameat(struct trace_event_raw_sys_enter *ctx)
 {
     /*
     olddfd: 0x%08lx, oldname: 0x%08lx, newdfd: 0x%08lx, newname: 0x%08lx
-    ((unsigned long)(REC->olddfd)), ((unsigned long)(REC->oldname)), ((unsigned long)(REC->newdfd)), ((unsigned long)(REC->newname))
+    ((unsigned long)(REC->olddfd)), ((unsigned long)(REC->oldname)), ((unsigned long)(REC->newdfd)), ((unsigned
+    long)(REC->newname))
     */
-    return save_rename_event(
-        (const char *)ctx->args[1],
-        (const char *)ctx->args[3],
-        (__s32)ctx->args[0],
-        (__s32)ctx->args[2],
-        0,
-        RENAMEAT_SYSCALL);
+    return save_rename_event((const char *)ctx->args[1], (const char *)ctx->args[3], (__s32)ctx->args[0],
+                             (__s32)ctx->args[2], 0, RENAMEAT_SYSCALL);
 }
 
 SEC("tracepoint/syscalls/sys_enter_renameat2")
@@ -387,29 +361,25 @@ int trace_renameat2(struct trace_event_raw_sys_enter *ctx)
 {
     /*
     olddfd: 0x%08lx, oldname: 0x%08lx, newdfd: 0x%08lx, newname: 0x%08lx, flags: 0x%08lx
-    ((unsigned long)(REC->olddfd)), ((unsigned long)(REC->oldname)), ((unsigned long)(REC->newdfd)), ((unsigned long)(REC->newname)), ((unsigned long)(REC->flags))
+    ((unsigned long)(REC->olddfd)), ((unsigned long)(REC->oldname)), ((unsigned long)(REC->newdfd)), ((unsigned
+    long)(REC->newname)), ((unsigned long)(REC->flags))
     */
 
-    return save_rename_event(
-        (const char *)ctx->args[1],
-        (const char *)ctx->args[3],
-        (__s32)ctx->args[0],
-        (__s32)ctx->args[2],
-        (__u32)ctx->args[4],
-        RENAMEAT2_SYSCALL);
+    return save_rename_event((const char *)ctx->args[1], (const char *)ctx->args[3], (__s32)ctx->args[0],
+                             (__s32)ctx->args[2], (__u32)ctx->args[4], RENAMEAT2_SYSCALL);
 }
 
 static __always_inline int save_rename_event_exit(__s64 res, __u32 syscall_type)
 {
     __u64 pid_tgid = bpf_get_current_pid_tgid();
     __u32 tid = (__u32)pid_tgid;
-    
+
     struct renaming_event *pending = bpf_map_lookup_elem(&pending_rename_map, &tid);
     if (!pending)
         return 0;
 
     struct renaming_event *e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
-    if (!e) 
+    if (!e)
     {
         bpf_map_delete_elem(&pending_rename_map, &tid);
         return 0;
@@ -419,7 +389,7 @@ static __always_inline int save_rename_event_exit(__s64 res, __u32 syscall_type)
 
     e->header.type = EVENT_RENAME_EXIT;
     e->header.res = res;
-    
+
     bpf_map_delete_elem(&pending_rename_map, &tid);
 
     bpf_ringbuf_submit(e, 0);
@@ -435,7 +405,6 @@ int trace_rename_exit(struct trace_event_raw_sys_exit *ctx)
     REC->ret
     */
     return save_rename_event_exit((__s64)ctx->ret, RENAME_SYSCALL);
-
 }
 
 SEC("tracepoint/syscalls/sys_exit_renameat")
@@ -446,7 +415,6 @@ int trace_renameat_exit(struct trace_event_raw_sys_exit *ctx)
     REC->ret
     */
     return save_rename_event_exit((__s64)ctx->ret, RENAMEAT_SYSCALL);
-
 }
 
 SEC("tracepoint/syscalls/sys_exit_renameat2")
@@ -457,14 +425,14 @@ int trace_renameat2_exit(struct trace_event_raw_sys_exit *ctx)
     REC->ret
     */
     return save_rename_event_exit((__s64)ctx->ret, RENAMEAT2_SYSCALL);
-
 }
 
 /*-----------------------------------------------------------------*/
 /*------------------------------ FCHMOD ----------------------------*/
 /*-----------------------------------------------------------------*/
 
-static __always_inline int save_fchmod_event(__s32 dfd, const char *pathname,  __s32 mode,  __s32 flags, __u32 syscall_type)
+static __always_inline int save_fchmod_event(__s32 dfd, const char *pathname, __s32 mode, __s32 flags,
+                                             __u32 syscall_type)
 {
     struct opening_event e = {};
 
@@ -499,14 +467,8 @@ int trace_chmod(struct trace_event_raw_sys_enter *ctx)
     filename: 0x%08lx, mode: 0x%08lx"
     ((unsigned long)(REC->filename)), ((unsigned long)(REC->mode))
     */
-    
-    return save_fchmod_event(
-        0,
-        (const char *)ctx->args[0],
-        (__u32)ctx->args[1],
-        0,
-        FCHMOD_SYSCALL
-    );
+
+    return save_fchmod_event(0, (const char *)ctx->args[0], (__u32)ctx->args[1], 0, FCHMOD_SYSCALL);
 }
 
 SEC("tracepoint/syscalls/sys_enter_fchmod")
@@ -516,14 +478,8 @@ int trace_fchmod(struct trace_event_raw_sys_enter *ctx)
     fd: 0x%08lx, mode: 0x%08lx
     ((unsigned long)(REC->fd)), ((unsigned long)(REC->mode))
     */
-    
-    return save_fchmod_event(
-        (__u32)ctx->args[0],
-        NULL,
-        (__u32)ctx->args[1],
-        0,
-        FCHMOD_SYSCALL
-    );
+
+    return save_fchmod_event((__u32)ctx->args[0], NULL, (__u32)ctx->args[1], 0, FCHMOD_SYSCALL);
 }
 
 SEC("tracepoint/syscalls/sys_enter_fchmodat")
@@ -534,13 +490,7 @@ int trace_fchmodat(struct trace_event_raw_sys_enter *ctx)
     ((unsigned long)(REC->dfd)), ((unsigned long)(REC->filename)), ((unsigned long)(REC->mode))
     */
 
-    return save_fchmod_event(
-        (__s32)ctx->args[0],
-        (const char *)ctx->args[1],
-        (__u32)ctx->args[2],
-        0,
-        FCHMODAT_SYSCALL
-    );
+    return save_fchmod_event((__s32)ctx->args[0], (const char *)ctx->args[1], (__u32)ctx->args[2], 0, FCHMODAT_SYSCALL);
 }
 
 SEC("tracepoint/syscalls/sys_enter_fchmodat2")
@@ -548,42 +498,38 @@ int trace_fchmodat2(struct trace_event_raw_sys_enter *ctx)
 {
     /*
     dfd: 0x%08lx, filename: 0x%08lx, mode: 0x%08lx, flags: 0x%08lx
-    ((unsigned long)(REC->dfd)), ((unsigned long)(REC->filename)), ((unsigned long)(REC->mode)), ((unsigned long)(REC->flags))
+    ((unsigned long)(REC->dfd)), ((unsigned long)(REC->filename)), ((unsigned long)(REC->mode)), ((unsigned
+    long)(REC->flags))
     */
 
-    return save_fchmod_event(
-        (__s32)ctx->args[0],
-        (const char *)ctx->args[1],
-        (__u32)ctx->args[2],
-        (__u32)ctx->args[3],
-        FCHMODAT2_SYSCALL
-    );
+    return save_fchmod_event((__s32)ctx->args[0], (const char *)ctx->args[1], (__u32)ctx->args[2], (__u32)ctx->args[3],
+                             FCHMODAT2_SYSCALL);
 }
 
 static __always_inline int save_fchmod_event_exit(__s64 res, __u32 syscall_type)
 {
     __u64 pid_tgid = bpf_get_current_pid_tgid();
     __u32 tid = (__u32)pid_tgid;
-    
+
     struct opening_event *pending = bpf_map_lookup_elem(&pending_fchmod_map, &tid);
     if (!pending)
         return 0;
 
     struct opening_event *e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
-    if (!e) 
+    if (!e)
     {
         bpf_map_delete_elem(&pending_fchmod_map, &tid);
         return 0;
     }
 
     e->header = pending->header;
-    
+
     __builtin_memcpy(e->pathname, pending->pathname, sizeof(e->pathname));
-    
+
     e->dirfd = pending->dirfd;
     e->flags = pending->flags;
     e->mode = pending->mode;
-    
+
     e->header.type = EVENT_FCHMOD_EXIT;
     e->header.res = res;
 
@@ -641,7 +587,7 @@ int trace_fchmodat2_exit(struct trace_event_raw_sys_exit *ctx)
 /*-----------------------------------------------------------------*/
 /*----------------------------- UNLINK ----------------------------*/
 /*-----------------------------------------------------------------*/
-static __always_inline int save_unlink_event(__s32 fd, const char *pathname, __s32 flags,  __u32 syscall_type)
+static __always_inline int save_unlink_event(__s32 fd, const char *pathname, __s32 flags, __u32 syscall_type)
 {
     struct unlinking_event pending = {};
 
@@ -675,12 +621,7 @@ int trace_unlink(struct trace_event_raw_sys_enter *ctx)
     ((unsigned long)(REC->pathname))
     */
 
-    return save_unlink_event(
-        AT_FDCWD,
-        (const char *)ctx->args[0],
-        0,
-        UNLINK_SYSCALL
-    );
+    return save_unlink_event(AT_FDCWD, (const char *)ctx->args[0], 0, UNLINK_SYSCALL);
 }
 
 SEC("tracepoint/syscalls/sys_enter_unlinkat")
@@ -691,37 +632,32 @@ int trace_unlinkat(struct trace_event_raw_sys_enter *ctx)
     ((unsigned long)(REC->dfd)), ((unsigned long)(REC->pathname)), ((unsigned long)(REC->flag))
     */
 
-    return save_unlink_event(
-        (__s32)ctx->args[0],
-        (const char *)ctx->args[1],
-        (__u32)ctx->args[2],
-        UNLINKAT_SYSCALL
-    );
+    return save_unlink_event((__s32)ctx->args[0], (const char *)ctx->args[1], (__u32)ctx->args[2], UNLINKAT_SYSCALL);
 }
 
 static __always_inline int save_unlink_event_exit(__s64 res, __u32 syscall_type)
 {
     __u64 pid_tgid = bpf_get_current_pid_tgid();
     __u32 tid = (__u32)pid_tgid;
-    
+
     struct unlinking_event *pending = bpf_map_lookup_elem(&pending_unlink_map, &tid);
     if (!pending)
         return 0;
 
     struct unlinking_event *e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
-    if (!e) 
+    if (!e)
     {
         bpf_map_delete_elem(&pending_unlink_map, &tid);
         return 0;
     }
 
     e->header = pending->header;
-    
+
     __builtin_memcpy(e->pathname, pending->pathname, sizeof(e->pathname));
-    
+
     e->fd = pending->fd;
     e->flags = pending->flags;
-    
+
     e->header.type = EVENT_UNLINK_EXIT;
     e->header.res = res;
 
@@ -755,7 +691,8 @@ int trace_unlinkat_exit(struct trace_event_raw_sys_exit *ctx)
 /*-----------------------------------------------------------------*/
 /*----------------------------- CLONE -----------------------------*/
 /*-----------------------------------------------------------------*/
-static __always_inline int save_clone_event(__u64 flags, __u64 stack, __u64 stack_size, __u64 parent_tid, __u64 child_tid, __u64 tls, __u64 exit_signal, __u32 syscall_type)
+static __always_inline int save_clone_event(__u64 flags, __u64 stack, __u64 stack_size, __u64 parent_tid,
+                                            __u64 child_tid, __u64 tls, __u64 exit_signal, __u32 syscall_type)
 {
     struct cloning_event pending = {};
 
@@ -789,22 +726,14 @@ int trace_clone(struct trace_event_raw_sys_enter *ctx)
 {
     /*
     clone_flags: 0x%08lx, newsp: 0x%08lx, parent_tidptr: 0x%08lx, child_tidptr: 0x%08lx, tls: 0x%08lx
-    ((unsigned long)(REC->clone_flags)), ((unsigned long)(REC->newsp)), ((unsigned long)(REC->parent_tidptr)), 
+    ((unsigned long)(REC->clone_flags)), ((unsigned long)(REC->newsp)), ((unsigned long)(REC->parent_tidptr)),
     ((unsigned long)(REC->child_tidptr)), ((unsigned long)(REC->tls))
     */
 
     __u64 flags = (__u64)ctx->args[0];
 
-    return save_clone_event(
-        flags,
-        (__u64)ctx->args[1],
-        0,
-        (__u64)ctx->args[2],
-        (__u64)ctx->args[3],
-        (__u64)ctx->args[4],
-        flags & 0xff,
-        CLONE_SYSCALL
-    );
+    return save_clone_event(flags, (__u64)ctx->args[1], 0, (__u64)ctx->args[2], (__u64)ctx->args[3],
+                            (__u64)ctx->args[4], flags & 0xff, CLONE_SYSCALL);
 }
 
 SEC("tracepoint/syscalls/sys_enter_clone3")
@@ -831,29 +760,21 @@ int trace_enter_clone3(struct trace_event_raw_sys_enter *ctx)
 
     bpf_probe_read_user(&args, read_size, user_args);
 
-    return save_clone_event(
-        args.flags,
-        args.stack,
-        args.stack_size,
-        args.parent_tid,
-        args.child_tid,
-        args.tls,
-        args.exit_signal,
-        CLONE3_SYSCALL
-    );
+    return save_clone_event(args.flags, args.stack, args.stack_size, args.parent_tid, args.child_tid, args.tls,
+                            args.exit_signal, CLONE3_SYSCALL);
 }
 
 static __always_inline int save_clone_event_exit(__s64 res, __u32 syscall_type)
 {
     __u64 pid_tgid = bpf_get_current_pid_tgid();
     __u32 tid = (__u32)pid_tgid;
-    
+
     struct cloning_event *pending = bpf_map_lookup_elem(&pending_clone_map, &tid);
     if (!pending)
         return 0;
 
     struct cloning_event *e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
-    if (!e) 
+    if (!e)
     {
         bpf_map_delete_elem(&pending_clone_map, &tid);
         return 0;
