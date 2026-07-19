@@ -7,8 +7,8 @@ import (
 )
 
 const (
-	cfgPath    = "bpf-config.json"
-	maxPaths   = 64
+	cfgPath  = "bpf-config.json"
+	maxPaths = 64
 )
 
 type eventConfig struct {
@@ -28,6 +28,7 @@ type openFilterConfig struct {
 type filterConfig struct {
 	SuccessfulOnly    bool             `json:"successful_only"`
 	Open              openFilterConfig `json:"open"`
+	FollowAll         bool             `json:"follow_all"`
 	FollowOnlyInclude bool             `json:"follow_only_include"`
 	FollowOnlyExclude bool             `json:"follow_only_exclude"`
 	IncludePaths      []string         `json:"include_paths"`

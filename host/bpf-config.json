@@ -1,7 +1,7 @@
 {
   "comment" : "to eBPF",
   "events": {
-    "tcp": true,
+    "tcp": false,
     "open": false,
     "execve": true,
     "rename": true,
@@ -17,10 +17,11 @@
     },
 
     "comment" : "to agent",
-    "follow_only_include": true,
+    "follow_only_include": false,
     "follow_only_exclude": false,
+    "follow_all": true,
 
-    "include_paths": ["/tmp"],
+    "include_paths": [],
     "exclude_paths": []
   }
 }

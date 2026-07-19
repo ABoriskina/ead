@@ -42,10 +42,9 @@ def update_metrics(event: dict[str, Any]):
     events_total.labels(event_type=event_type).inc()
     last_event_timestamp.set(time.time())
 
-    if event_type == "flow":
+    if event_type == "network":
         process = event.get("process", {})
         comm = process.get("comm", "unknown")
-        dest_port = str(event.get("dest_port", "unknown"))
 
         tcp_connections_total.inc()
         tcp_connections_by_process.labels(comm=comm).inc()
@@ -54,12 +53,47 @@ def update_metrics(event: dict[str, Any]):
 def handle_event(event: dict[str, Any]):
     update_metrics(event)
 
-    if event.get("event_type") == "flow":
-        process = event.get("process", {})
+    event_type = event.get("event_type", "unknown")
+    process = event.get("process", {})
+    event_data = event.get("event", {})
+
+    operation = event_data.get("operation", "unknown")
+    pid = process.get("pid", "unknown")
+    comm = process.get("comm", "unknown")
+
+    print(
+        f"[{event_type.upper()}] "
+        f"operation={operation} "
+        f"pid={pid} "
+        f"comm={comm}"
+    )
+
+    if event_type == "network":
         print(
-            f"{event.get('src_ip')}:{event.get('src_port')} -> "
-            f"{event.get('dest_ip')}:{event.get('dest_port')} "
-            f"pid={process.get('pid')} comm={process.get('comm')}"
+            f"  {event_data.get('src_ip')}:{event_data.get('src_port')} -> "
+            f"{event_data.get('dst_ip')}:{event_data.get('dst_port')}"
+        )
+
+    elif operation in {"opening", "fchmod", "unlink", "execution"}:
+        print(
+            f"  pathname={event_data.get('pathname')} "
+            f"fd={event_data.get('fd')} "
+            f"flags={event_data.get('flags')} "
+            f"result={event_data.get('result')}"
+        )
+
+    elif operation == "renaming":
+        print(
+            f"  {event_data.get('oldname')} -> "
+            f"{event_data.get('newname')} "
+            f"result={event_data.get('result')}"
+        )
+
+    elif operation == "clone":
+        print(
+            f"  child_tid={event_data.get('child_tid')} "
+            f"flags={event_data.get('clone_flags')} "
+            f"result={event_data.get('result')}"
         )
 
 
@@ -68,16 +102,18 @@ def handle_agent(conn: socket.socket, addr: tuple[str, int]):
 
     with conn:
         file = conn.makefile("r", encoding="utf-8")
-
         for line in file:
             line = line.strip()
             if not line:
                 continue
 
+            print(f"Received raw: {line}")
+
             try:
                 event = json.loads(line)
-            except json.JSONDecodeError:
-                print(f"Invalid JSON: {line}")
+            except json.JSONDecodeError as error:
+                print(f"Invalid JSON: {error}")
+                print(f"Raw data: {line}")
                 continue
 
             handle_event(event)

@@ -503,7 +503,7 @@ int trace_renameat2_exit(struct trace_event_raw_sys_exit *ctx)
 static __always_inline int save_fchmod_event(__s32 dfd, const char *pathname, __s32 mode, __s32 flags,
                                              __u32 syscall_type)
 {
-    if (!event_enabled(CONFIG_EVENT_CHMOD))
+    if (!event_enabled(CONFIG_EVENT_FCHMOD))
         return 0;
 
     struct opening_event e = {};

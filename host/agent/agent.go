@@ -133,7 +133,7 @@ const (
 	configEventOpen
 	configEventExecve
 	configEventRename
-	configEventChmod
+	configEventFchmod
 	configEventUnlink
 	configEventClone
 )
@@ -191,6 +191,10 @@ func pathInList(pathname string, option pathOption) bool {
 }
 
 func checkPath(pathname string) bool {
+	if agentConfig.Filters.FollowAll {
+		return true
+	}
+
 	if agentConfig.Filters.FollowOnlyInclude {
 		return pathInList(pathname, includePath)
 	} else if agentConfig.Filters.FollowOnlyExclude {
@@ -220,7 +224,7 @@ func prepareBPFConfig(cfg *config) bpfCollectorConfig {
 	}
 
 	if cfg.Events.Chmod {
-		bpfConfig.EnabledEvents |= configEventChmod
+		bpfConfig.EnabledEvents |= configEventFchmod
 	}
 
 	if cfg.Events.Unlink {
@@ -406,7 +410,7 @@ func handleEvent(data []byte) error {
 			event.Dport,
 		)
 
-		if err := sendTCPEventToAnalyzer(&event); err != nil {
+		if err := sendEventToAnalyzer(&event, eventConnect); err != nil {
 			log.Printf("failed to send connect event to analyzer: %v", err)
 		}
 
@@ -438,7 +442,7 @@ func handleEvent(data []byte) error {
 			cString(event.Argv[2][:]),
 		)
 
-		if err := sendExecveEventToAnalyzer(&event); err != nil {
+		if err := sendEventToAnalyzer(&event, eventExecveExit); err != nil {
 			log.Printf("failed to send execve event to analyzer: %v", err)
 		}
 
@@ -472,7 +476,7 @@ func handleEvent(data []byte) error {
 			event.DurationNs,
 		)
 
-		if err := sendOpenatEventToAnalyzer(&event); err != nil {
+		if err := sendEventToAnalyzer(&event, eventOpenatExit); err != nil {
 			log.Printf("failed to send openat event to analyzer: %v", err)
 		}
 
@@ -502,7 +506,7 @@ func handleEvent(data []byte) error {
 			event.Header.Res,
 		)
 
-		if err := sendRenameEventToAnalyzer(&event); err != nil {
+		if err := sendEventToAnalyzer(&event, eventRenameExit); err != nil {
 			log.Printf("failed to send rename event to analyzer: %v", err)
 		}
 
@@ -540,7 +544,9 @@ func handleEvent(data []byte) error {
 			event.Mode,
 			event.Header.Res,
 		)
-		// TODO: send event
+		if err := sendEventToAnalyzer(&event, eventFchmodExit); err != nil {
+			log.Printf("failed to send fchmod event to analyzer: %v", err)
+		}
 
 	case eventUnlinkExit:
 		var event unlinkingEvent
@@ -569,7 +575,9 @@ func handleEvent(data []byte) error {
 			event.Flags,
 			event.Header.Res,
 		)
-		// TODO: send event
+		if err := sendEventToAnalyzer(&event, eventUnlinkExit); err != nil {
+			log.Printf("failed to send unlink event to analyzer: %v", err)
+		}
 
 	case eventCloneExit:
 		var event cloningEvent
@@ -596,7 +604,9 @@ func handleEvent(data []byte) error {
 			event.ExitSignal,
 			event.Header.Res,
 		)
-		// TODO: send event
+		if err := sendEventToAnalyzer(&event, eventCloneExit); err != nil {
+			log.Printf("failed to send clone event to analyzer: %v", err)
+		}
 	}
 
 	return nil

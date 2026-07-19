@@ -16,7 +16,7 @@ enum configured_event
     CONFIG_EVENT_OPEN = 1U << 1,
     CONFIG_EVENT_EXECVE = 1U << 2,
     CONFIG_EVENT_RENAME = 1U << 3,
-    CONFIG_EVENT_CHMOD = 1U << 4,
+    CONFIG_EVENT_FCHMOD = 1U << 4,
     CONFIG_EVENT_UNLINK = 1U << 5,
     CONFIG_EVENT_CLONE = 1U << 6
 };
