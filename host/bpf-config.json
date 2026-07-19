@@ -11,17 +11,77 @@
   },
   "filters": {
     "successful_only": false,
+    "tcp": {
+      "successful_only": false,
 
-    "open": {
-      "write_only": false
+      "follow_all": true,
+      "follow_only_include": false,
+      "follow_only_exclude": false,
+
+      "include_paths": [],
+      "exclude_paths": []
     },
+    "open": {
+      "write_only": false,
 
-    "comment" : "to agent",
-    "follow_only_include": false,
-    "follow_only_exclude": false,
-    "follow_all": true,
+      "successful_only": false,
 
-    "include_paths": [],
-    "exclude_paths": []
+      "follow_all": true,
+      "follow_only_include": false,
+      "follow_only_exclude": false,
+
+      "include_paths": [],
+      "exclude_paths": []
+    },
+    "execve": {
+      "successful_only": false,
+
+      "follow_all": true,
+      "follow_only_include": false,
+      "follow_only_exclude": false,
+
+      "include_paths": [],
+      "exclude_paths": []
+    },
+    "rename": {
+      "successful_only": false,
+
+      "follow_all": true,
+      "follow_only_include": false,
+      "follow_only_exclude": false,
+
+      "include_paths": [],
+      "exclude_paths": []
+    },
+    "chmod": {
+      "successful_only": false,
+
+      "follow_all": true,
+      "follow_only_include": false,
+      "follow_only_exclude": false,
+
+      "include_paths": [],
+      "exclude_paths": []
+    },
+    "unlink": {
+      "successful_only": false,
+
+      "follow_all": true,
+      "follow_only_include": false,
+      "follow_only_exclude": false,
+
+      "include_paths": [],
+      "exclude_paths": []
+    },
+    "clone": {
+      "successful_only": false,
+
+      "follow_all": true,
+      "follow_only_include": false,
+      "follow_only_exclude": false,
+
+      "include_paths": [],
+      "exclude_paths": []
+    }
   }
 }

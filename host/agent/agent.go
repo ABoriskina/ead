@@ -139,12 +139,12 @@ const (
 )
 
 type bpfCollectorConfig struct {
-	EnabledEvents uint32
+	EnabledEvents    uint32
+	SuccessfulEvents uint32
 
-	SuccessfulOnly uint8
-	OpenWriteOnly  uint8
+	OpenWriteOnly uint8
 
-	Reserved [2]uint8
+	Reserved [3]uint8
 }
 
 var agentConfig config
@@ -170,17 +170,17 @@ func pathHasPrefix(pathname string, prefix string) bool {
 	return strings.HasPrefix(pathname, prefix)
 }
 
-func pathInList(pathname string, option pathOption) bool {
+func pathInList(pathname string, filter *eventFilterConfig, option pathOption) bool {
 	switch option {
 	case includePath:
-		for _, path := range agentConfig.Filters.IncludePaths {
+		for _, path := range filter.IncludePaths {
 			if pathHasPrefix(pathname, path) {
 				return true
 			}
 		}
 
 	case excludePath:
-		for _, path := range agentConfig.Filters.ExcludePaths {
+		for _, path := range filter.ExcludePaths {
 			if pathHasPrefix(pathname, path) {
 				return true
 			}
@@ -190,18 +190,18 @@ func pathInList(pathname string, option pathOption) bool {
 	return false
 }
 
-func checkPath(pathname string) bool {
-	if agentConfig.Filters.FollowAll {
+func checkPath(pathname string, filter *eventFilterConfig) bool {
+	if filter.FollowAll {
 		return true
 	}
 
-	if agentConfig.Filters.FollowOnlyInclude {
-		return pathInList(pathname, includePath)
-	} else if agentConfig.Filters.FollowOnlyExclude {
-		return pathInList(pathname, excludePath)
+	if filter.FollowOnlyInclude {
+		return pathInList(pathname, filter, includePath)
+	} else if filter.FollowOnlyExclude {
+		return !pathInList(pathname, filter, excludePath)
 	}
 
-	return false
+	return true
 }
 
 func prepareBPFConfig(cfg *config) bpfCollectorConfig {
@@ -235,8 +235,26 @@ func prepareBPFConfig(cfg *config) bpfCollectorConfig {
 		bpfConfig.EnabledEvents |= configEventClone
 	}
 
-	if cfg.Filters.SuccessfulOnly {
-		bpfConfig.SuccessfulOnly = 1
+	if cfg.Filters.SuccessfulOnly || cfg.Filters.TCP.SuccessfulOnly {
+		bpfConfig.SuccessfulEvents |= configEventTCP
+	}
+	if cfg.Filters.SuccessfulOnly || cfg.Filters.Open.SuccessfulOnly {
+		bpfConfig.SuccessfulEvents |= configEventOpen
+	}
+	if cfg.Filters.SuccessfulOnly || cfg.Filters.Execve.SuccessfulOnly {
+		bpfConfig.SuccessfulEvents |= configEventExecve
+	}
+	if cfg.Filters.SuccessfulOnly || cfg.Filters.Rename.SuccessfulOnly {
+		bpfConfig.SuccessfulEvents |= configEventRename
+	}
+	if cfg.Filters.SuccessfulOnly || cfg.Filters.Chmod.SuccessfulOnly {
+		bpfConfig.SuccessfulEvents |= configEventFchmod
+	}
+	if cfg.Filters.SuccessfulOnly || cfg.Filters.Unlink.SuccessfulOnly {
+		bpfConfig.SuccessfulEvents |= configEventUnlink
+	}
+	if cfg.Filters.SuccessfulOnly || cfg.Filters.Clone.SuccessfulOnly {
+		bpfConfig.SuccessfulEvents |= configEventClone
 	}
 
 	if cfg.Filters.Open.WriteOnly {
@@ -255,6 +273,10 @@ func resolveFDPath(pid uint32, fd int32) (string, error) {
 	}
 
 	return path, nil
+}
+
+func resolveProcessPath(pid uint32) (string, error) {
+	return os.Readlink(fmt.Sprintf("/proc/%d/exe", pid))
 }
 
 func resolveEventPath(pid uint32, dirfd int32, pathname string) (string, error) {
@@ -397,6 +419,14 @@ func handleEvent(data []byte) error {
 			return err
 		}
 
+		pathname, err := resolveProcessPath(event.Header.Pid)
+		if err != nil {
+			pathname = "<unresolved>"
+		}
+		if !checkPath(pathname, &agentConfig.Filters.TCP) {
+			return nil
+		}
+
 		srcIP := uint32ToIPv4(event.Saddr)
 		dstIP := uint32ToIPv4(event.Daddr)
 
@@ -427,7 +457,7 @@ func handleEvent(data []byte) error {
 
 		pathname := cString(event.Pathname[:])
 
-		if !checkPath(pathname) {
+		if !checkPath(pathname, &agentConfig.Filters.Execve) {
 			return nil
 		}
 
@@ -459,7 +489,7 @@ func handleEvent(data []byte) error {
 
 		pathname := cString(event.Pathname[:])
 
-		if !checkPath(pathname) {
+		if !checkPath(pathname, &agentConfig.Filters.Open) {
 			return nil
 		}
 
@@ -489,6 +519,13 @@ func handleEvent(data []byte) error {
 			&event,
 		); err != nil {
 			return err
+		}
+
+		oldname := cString(event.Oldname[:])
+		newname := cString(event.Newname[:])
+		if !checkPath(oldname, &agentConfig.Filters.Rename) &&
+			!checkPath(newname, &agentConfig.Filters.Rename) {
+			return nil
 		}
 
 		// TODO: too much noise
@@ -532,7 +569,7 @@ func handleEvent(data []byte) error {
 			pathname = "<unresolved>"
 		}
 
-		if !checkPath(pathname) {
+		if !checkPath(pathname, &agentConfig.Filters.Chmod) {
 			return nil
 		}
 
@@ -561,7 +598,7 @@ func handleEvent(data []byte) error {
 
 		pathname := cString(event.Pathname[:])
 
-		if !checkPath(pathname) {
+		if !checkPath(pathname, &agentConfig.Filters.Unlink) {
 			return nil
 		}
 
@@ -588,6 +625,14 @@ func handleEvent(data []byte) error {
 			&event,
 		); err != nil {
 			return err
+		}
+
+		pathname, err := resolveProcessPath(event.Header.Pid)
+		if err != nil {
+			pathname = "<unresolved>"
+		}
+		if !checkPath(pathname, &agentConfig.Filters.Clone) {
+			return nil
 		}
 
 		fmt.Printf(

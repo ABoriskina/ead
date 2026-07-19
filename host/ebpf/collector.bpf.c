@@ -15,6 +15,15 @@ static __always_inline bool event_enabled(__u32 event)
     return (config->enabled_events & event) != 0;
 }
 
+static __always_inline bool successful_only(__u32 event)
+{
+    const struct bpf_collector_config *config = get_config();
+    if (!config)
+        return false;
+
+    return (config->successful_events & event) != 0;
+}
+
 static __always_inline bool open_modifies_file(__u32 flags)
 {
     __u32 access_mode = flags & O_ACCMODE;
@@ -170,6 +179,12 @@ static __always_inline int save_execve_event_exit(__s64 res, __u32 syscall_type)
     if (!pending)
         return 0;
 
+    if (successful_only(CONFIG_EVENT_EXECVE) && res < 0)
+    {
+        bpf_map_delete_elem(&pending_execve_map, &tid);
+        return 0;
+    }
+
     struct execution_event *e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
     if (!e)
     {
@@ -291,7 +306,7 @@ static __always_inline int save_open_event_exit(__s64 res, __u32 syscall_type)
         bpf_map_delete_elem(&pending_openat_map, &tid);
         return 0;
     }
-    if (config->successful_only && res < 0)
+    if (successful_only(CONFIG_EVENT_OPEN) && res < 0)
     {
         bpf_map_delete_elem(&pending_openat_map, &tid);
         return 0;
@@ -440,7 +455,7 @@ static __always_inline int save_rename_event_exit(__s64 res, __u32 syscall_type)
         bpf_map_delete_elem(&pending_rename_map, &tid);
         return 0;
     }
-    if (config->successful_only && res < 0)
+    if (successful_only(CONFIG_EVENT_RENAME) && res < 0)
     {
         bpf_map_delete_elem(&pending_rename_map, &tid);
         return 0;
@@ -594,7 +609,7 @@ static __always_inline int save_fchmod_event_exit(__s64 res, __u32 syscall_type)
         bpf_map_delete_elem(&pending_fchmod_map, &tid);
         return 0;
     }
-    if (config->successful_only && res < 0)
+    if (successful_only(CONFIG_EVENT_FCHMOD) && res < 0)
     {
         bpf_map_delete_elem(&pending_fchmod_map, &tid);
         return 0;
@@ -740,7 +755,7 @@ static __always_inline int save_unlink_event_exit(__s64 res, __u32 syscall_type)
         bpf_map_delete_elem(&pending_unlink_map, &tid);
         return 0;
     }
-    if (config->successful_only && res < 0)
+    if (successful_only(CONFIG_EVENT_UNLINK) && res < 0)
     {
         bpf_map_delete_elem(&pending_unlink_map, &tid);
         return 0;
@@ -886,7 +901,7 @@ static __always_inline int save_clone_event_exit(__s64 res, __u32 syscall_type)
         bpf_map_delete_elem(&pending_clone_map, &tid);
         return 0;
     }
-    if (config->successful_only && res < 0)
+    if (successful_only(CONFIG_EVENT_CLONE) && res < 0)
     {
         bpf_map_delete_elem(&pending_clone_map, &tid);
         return 0;

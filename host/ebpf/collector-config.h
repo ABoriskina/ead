@@ -25,10 +25,10 @@ struct bpf_collector_config
 {
     config_u32_t enabled_events;
 
-    config_bool_t successful_only;
+    config_u32_t successful_events;
     config_bool_t open_write_only;
 
-    config_bool_t reserved[2]; // alignment
+    config_bool_t reserved[3]; // alignment
 };
 
 #endif

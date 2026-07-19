@@ -21,18 +21,25 @@ type eventConfig struct {
 	Clone  bool `json:"clone"`
 }
 
-type openFilterConfig struct {
-	WriteOnly bool `json:"write_only"`
+type eventFilterConfig struct {
+	SuccessfulOnly    bool     `json:"successful_only"`
+	WriteOnly         bool     `json:"write_only"`
+	FollowAll         bool     `json:"follow_all"`
+	FollowOnlyInclude bool     `json:"follow_only_include"`
+	FollowOnlyExclude bool     `json:"follow_only_exclude"`
+	IncludePaths      []string `json:"include_paths"`
+	ExcludePaths      []string `json:"exclude_paths"`
 }
 
 type filterConfig struct {
-	SuccessfulOnly    bool             `json:"successful_only"`
-	Open              openFilterConfig `json:"open"`
-	FollowAll         bool             `json:"follow_all"`
-	FollowOnlyInclude bool             `json:"follow_only_include"`
-	FollowOnlyExclude bool             `json:"follow_only_exclude"`
-	IncludePaths      []string         `json:"include_paths"`
-	ExcludePaths      []string         `json:"exclude_paths"`
+	SuccessfulOnly bool              `json:"successful_only"`
+	TCP            eventFilterConfig `json:"tcp"`
+	Open           eventFilterConfig `json:"open"`
+	Execve         eventFilterConfig `json:"execve"`
+	Rename         eventFilterConfig `json:"rename"`
+	Chmod          eventFilterConfig `json:"chmod"`
+	Unlink         eventFilterConfig `json:"unlink"`
+	Clone          eventFilterConfig `json:"clone"`
 }
 
 type config struct {
@@ -54,25 +61,38 @@ func parseConfig(cfg *config) error {
 		return fmt.Errorf("JSON parse error: %w", err)
 	}
 
-	if len(cfg.Filters.IncludePaths) > maxPaths {
-		cfg.Filters.IncludePaths = cfg.Filters.IncludePaths[:maxPaths]
+	filters := []*eventFilterConfig{
+		&cfg.Filters.TCP,
+		&cfg.Filters.Open,
+		&cfg.Filters.Execve,
+		&cfg.Filters.Rename,
+		&cfg.Filters.Chmod,
+		&cfg.Filters.Unlink,
+		&cfg.Filters.Clone,
 	}
-
-	if len(cfg.Filters.ExcludePaths) > maxPaths {
-		cfg.Filters.ExcludePaths = cfg.Filters.ExcludePaths[:maxPaths]
-	}
-
-	for i, path := range cfg.Filters.IncludePaths {
-		if len(path) >= maxPathLen {
-			cfg.Filters.IncludePaths[i] = path[:maxPathLen-1]
-		}
-	}
-
-	for i, path := range cfg.Filters.ExcludePaths {
-		if len(path) >= maxPathLen {
-			cfg.Filters.ExcludePaths[i] = path[:maxPathLen-1]
-		}
+	for _, filter := range filters {
+		truncateFilterPaths(filter)
 	}
 
 	return nil
+}
+
+func truncateFilterPaths(filter *eventFilterConfig) {
+	if len(filter.IncludePaths) > maxPaths {
+		filter.IncludePaths = filter.IncludePaths[:maxPaths]
+	}
+	if len(filter.ExcludePaths) > maxPaths {
+		filter.ExcludePaths = filter.ExcludePaths[:maxPaths]
+	}
+
+	for i, path := range filter.IncludePaths {
+		if len(path) >= maxPathLen {
+			filter.IncludePaths[i] = path[:maxPathLen-1]
+		}
+	}
+	for i, path := range filter.ExcludePaths {
+		if len(path) >= maxPathLen {
+			filter.ExcludePaths[i] = path[:maxPathLen-1]
+		}
+	}
 }
