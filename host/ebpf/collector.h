@@ -33,6 +33,7 @@ enum event_type
     EVENT_UNLINK_EXIT,
 
     EVENT_CLONE,
+    EVENT_CLONE_EXIT,
 
 };
 
@@ -55,7 +56,10 @@ enum syscall_types
     FCHMODAT2_SYSCALL,
 
     UNLINK_SYSCALL,
-    UNLINKAT_SYSCALL
+    UNLINKAT_SYSCALL,
+
+    CLONE_SYSCALL,
+    CLONE3_SYSCALL
 };
 
 struct events_header
@@ -124,6 +128,18 @@ struct unlinking_event
     __u32 flags;
 };
 
+struct cloning_event
+{
+    struct events_header header;
+    __u64 flags;
+    __u64 stack;
+    __u64 stack_size;
+    __u64 parent_tid;
+    __u64 child_tid;
+    __u64 tls;
+    __u64 exit_signal;
+};
+
 struct
 {
     __uint(type, BPF_MAP_TYPE_RINGBUF);
@@ -168,6 +184,14 @@ struct
     __uint(type, BPF_MAP_TYPE_HASH);
     __uint(max_entries, 16384);
     __type(key, __u32);
+    __type(value, struct opening_event);
+} pending_fchmod_map SEC(".maps");
+
+struct
+{
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 16384);
+    __type(key, __u32);
     __type(value, struct unlinking_event);
 } pending_unlink_map SEC(".maps");
 
@@ -176,8 +200,8 @@ struct
     __uint(type, BPF_MAP_TYPE_HASH);
     __uint(max_entries, 16384);
     __type(key, __u32);
-    __type(value, struct opening_event);
-} pending_fchmod_map SEC(".maps");
+    __type(value, struct cloning_event);
+} pending_clone_map SEC(".maps");
 
 struct
 {

@@ -752,4 +752,144 @@ int trace_unlinkat_exit(struct trace_event_raw_sys_exit *ctx)
     return save_unlink_event_exit((__s64)ctx->ret, UNLINKAT_SYSCALL);
 }
 
+/*-----------------------------------------------------------------*/
+/*----------------------------- CLONE -----------------------------*/
+/*-----------------------------------------------------------------*/
+static __always_inline int save_clone_event(__u64 flags, __u64 stack, __u64 stack_size, __u64 parent_tid, __u64 child_tid, __u64 tls, __u64 exit_signal, __u32 syscall_type)
+{
+    struct cloning_event pending = {};
+
+    pending.header.type = EVENT_CLONE;
+
+    __u64 pid_tgid = bpf_get_current_pid_tgid();
+    pending.header.pid = pid_tgid >> 32;
+    pending.header.tid = pid_tgid & 0xffffffff;
+
+    pending.header.uid = bpf_get_current_uid_gid() & 0xffffffff;
+    pending.header.timestamp_ns = bpf_ktime_get_ns();
+
+    bpf_get_current_comm(pending.header.comm, sizeof(pending.header.comm));
+
+    pending.flags = flags;
+    pending.stack = stack;
+    pending.stack_size = stack_size;
+    pending.parent_tid = parent_tid;
+    pending.child_tid = child_tid;
+    pending.tls = tls;
+    pending.exit_signal = exit_signal;
+    pending.header.syscall_type = syscall_type;
+
+    bpf_map_update_elem(&pending_clone_map, &pending.header.tid, &pending, BPF_ANY);
+
+    return 0;
+}
+
+SEC("tracepoint/syscalls/sys_enter_clone")
+int trace_clone(struct trace_event_raw_sys_enter *ctx)
+{
+    /*
+    clone_flags: 0x%08lx, newsp: 0x%08lx, parent_tidptr: 0x%08lx, child_tidptr: 0x%08lx, tls: 0x%08lx
+    ((unsigned long)(REC->clone_flags)), ((unsigned long)(REC->newsp)), ((unsigned long)(REC->parent_tidptr)), 
+    ((unsigned long)(REC->child_tidptr)), ((unsigned long)(REC->tls))
+    */
+
+    __u64 flags = (__u64)ctx->args[0];
+
+    return save_clone_event(
+        flags,
+        (__u64)ctx->args[1],
+        0,
+        (__u64)ctx->args[2],
+        (__u64)ctx->args[3],
+        (__u64)ctx->args[4],
+        flags & 0xff,
+        CLONE_SYSCALL
+    );
+}
+
+SEC("tracepoint/syscalls/sys_enter_clone3")
+int trace_enter_clone3(struct trace_event_raw_sys_enter *ctx)
+{
+    /*
+    uargs: 0x%08lx, size: 0x%08lx
+    ((unsigned long)(REC->uargs)), ((unsigned long)(REC->size))
+    */
+
+    const void *user_args = (const void *)ctx->args[0];
+    __u64 args_size = (__u64)ctx->args[1];
+    if (!user_args)
+        return 0;
+
+    struct cloning_event args = {};
+    __u32 read_size = sizeof(args);
+
+    if (args_size < read_size)
+        read_size = (__u32)args_size;
+
+    if (read_size == 0)
+        return 0;
+
+    bpf_probe_read_user(&args, read_size, user_args);
+
+    return save_clone_event(
+        args.flags,
+        args.stack,
+        args.stack_size,
+        args.parent_tid,
+        args.child_tid,
+        args.tls,
+        args.exit_signal,
+        CLONE3_SYSCALL
+    );
+}
+
+static __always_inline int save_clone_event_exit(__s64 res, __u32 syscall_type)
+{
+    __u64 pid_tgid = bpf_get_current_pid_tgid();
+    __u32 tid = (__u32)pid_tgid;
+    
+    struct cloning_event *pending = bpf_map_lookup_elem(&pending_clone_map, &tid);
+    if (!pending)
+        return 0;
+
+    struct cloning_event *e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
+    if (!e) 
+    {
+        bpf_map_delete_elem(&pending_clone_map, &tid);
+        return 0;
+    }
+
+    *e = *pending;
+    e->header.type = EVENT_CLONE_EXIT;
+    e->header.res = res;
+
+    bpf_map_delete_elem(&pending_clone_map, &tid);
+
+    bpf_ringbuf_submit(e, 0);
+
+    return 0;
+}
+
+SEC("tracepoint/syscalls/sys_exit_clone")
+int trace_clone_exit(struct trace_event_raw_sys_exit *ctx)
+{
+    /*
+    0x%lx
+    REC->ret
+    */
+
+    return save_clone_event_exit((__s64)ctx->ret, CLONE_SYSCALL);
+}
+
+SEC("tracepoint/syscalls/sys_exit_clone3")
+int trace_clone3_exit(struct trace_event_raw_sys_exit *ctx)
+{
+    /*
+    0x%lx
+    REC->ret
+    */
+
+    return save_clone_event_exit((__s64)ctx->ret, CLONE3_SYSCALL);
+}
+
 char LICENSE[] SEC("license") = "GPL";

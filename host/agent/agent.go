@@ -49,6 +49,7 @@ const (
 	eventUnlinkExit
 
 	eventClone
+	eventCloneExit
 )
 
 type eventsHeader struct {
@@ -111,6 +112,18 @@ type unlinkingEvent struct {
 	Pathname [maxPathLen]byte
 	Fd       int32
 	Flags    uint32
+}
+
+type cloningEvent struct {
+	Header eventsHeader
+
+	Flags      uint64
+	Stack      uint64
+	StackSize  uint64
+	ParentTid  uint64
+	ChildTid   uint64
+	Tls        uint64
+	ExitSignal uint64
 }
 
 func resolveFDPath(pid uint32, fd int32) (string, error) {
@@ -363,6 +376,7 @@ func handleEvent(data []byte) error {
 		if err := sendRenameEventToAnalyzer(&event); err != nil {
 			log.Printf("failed to send rename event to analyzer: %v", err)
 		}
+	
 	case eventFchmodExit:
 		var event openingEvent
 
@@ -418,6 +432,33 @@ func handleEvent(data []byte) error {
 			cString(event.Pathname[:]),
 			event.Fd,
 			event.Flags,
+			event.Header.Res,
+		)
+		// TODO: send event
+
+	case eventCloneExit:
+		var event cloningEvent
+
+		if err := binary.Read(
+			bytes.NewReader(data),
+			binary.LittleEndian,
+			&event,
+		); err != nil {
+			return err
+		}
+
+		fmt.Printf(
+			"[EVENT_CLONE] pid=%d uid=%d comm=%s flags=0x%x stack=%d stack_size=%d parent_tid=%d child_tid=%d tls=%d exit_signal=%d res=%d\n",
+			event.Header.Pid,
+			event.Header.Uid,
+			cString(event.Header.Comm[:]),
+			event.Flags,
+			event.Stack,
+			event.StackSize,
+			event.ParentTid,
+			event.ChildTid,
+			event.Tls,
+			event.ExitSignal,
 			event.Header.Res,
 		)
 		// TODO: send event
