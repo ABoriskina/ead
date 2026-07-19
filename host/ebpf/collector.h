@@ -1,5 +1,6 @@
-#include "collector-config.h"
 #include "vmlinux.h"
+
+#include "collector-config.h"
 #include <bpf/bpf_helpers.h>
 
 #define AF_INET 2

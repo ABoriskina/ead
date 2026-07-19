@@ -9,8 +9,11 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
+
+	"golang.org/x/sys/unix"
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
@@ -153,6 +156,16 @@ const (
 	excludePath
 )
 
+func bytesToString(buf []byte) string {
+	for i, b := range buf {
+		if b == 0 {
+			return string(buf[:i])
+		}
+	}
+
+	return string(buf)
+}
+
 func pathHasPrefix(pathname string, prefix string) bool {
 	return strings.HasPrefix(pathname, prefix)
 }
@@ -238,6 +251,41 @@ func resolveFDPath(pid uint32, fd int32) (string, error) {
 	}
 
 	return path, nil
+}
+
+func resolveEventPath(pid uint32, dirfd int32, pathname string) (string, error) {
+	if pathname == "" {
+		if dirfd >= 0 {
+			return resolveFDPath(pid, dirfd)
+		}
+
+		return "", fmt.Errorf("cannot resolve empty pathname")
+	}
+
+	if filepath.IsAbs(pathname) {
+		return pathname, nil
+	}
+
+	var basePath string
+	var err error
+
+	if dirfd == unix.AT_FDCWD {
+		procPath := fmt.Sprintf("/proc/%d/cwd", pid)
+
+		basePath, err = os.Readlink(procPath)
+		if err != nil {
+			return "", err
+		}
+	} else if dirfd >= 0 {
+		basePath, err = resolveFDPath(pid, dirfd)
+		if err != nil {
+			return "", err
+		}
+	} else {
+		return "", fmt.Errorf("invalid dirfd: %d", dirfd)
+	}
+
+	return filepath.Join(basePath, pathname), nil
 }
 
 func main() {
@@ -457,7 +505,7 @@ func handleEvent(data []byte) error {
 		if err := sendRenameEventToAnalyzer(&event); err != nil {
 			log.Printf("failed to send rename event to analyzer: %v", err)
 		}
-	
+
 	case eventFchmodExit:
 		var event openingEvent
 
@@ -469,33 +517,29 @@ func handleEvent(data []byte) error {
 			return err
 		}
 
-		pathname, err := resolveFDPath(
+		eventPathname := cString(event.Pathname[:])
+		pathname, err := resolveEventPath(
 			event.Header.Pid,
 			event.Dirfd,
+			eventPathname,
 		)
 
-		if err == nil {
-			if !checkPath(cString(event.Pathname[:])) {
-				return nil
-			}
-
-			fmt.Printf(
-				"[EVENT_(F)CHMOD] pid=%d fd=%d file=%s mode=%04o res=%d\n",
-				event.Header.Pid,
-				event.Dirfd,
-				pathname,
-				event.Mode,
-				event.Header.Res,
-			)
-		} else {
-			fmt.Printf(
-				"[EVENT_(F)CHMOD] pid=%d fd=%d file=<unresolved> mode=%04o res=%d\n",
-				event.Header.Pid,
-				event.Dirfd,
-				event.Mode,
-				event.Header.Res,
-			)
+		if err != nil {
+			pathname = "<unresolved>"
 		}
+
+		if !checkPath(pathname) {
+			return nil
+		}
+
+		fmt.Printf(
+			"[EVENT_(F)CHMOD] pid=%d fd=%d file=%s mode=%04o res=%d\n",
+			event.Header.Pid,
+			event.Dirfd,
+			pathname,
+			event.Mode,
+			event.Header.Res,
+		)
 		// TODO: send event
 
 	case eventUnlinkExit:

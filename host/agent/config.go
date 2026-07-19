@@ -8,7 +8,6 @@ import (
 
 const (
 	cfgPath    = "bpf-config.json"
-	maxPathLen = 256
 	maxPaths   = 64
 )
 
