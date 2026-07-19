@@ -9,7 +9,6 @@ import (
 	"net"
 	"os"
 	"os/signal"
-	"strconv"
 	"strings"
 	"syscall"
 
@@ -126,6 +125,110 @@ type cloningEvent struct {
 	ExitSignal uint64
 }
 
+const (
+	configEventTCP uint32 = 1 << iota
+	configEventOpen
+	configEventExecve
+	configEventRename
+	configEventChmod
+	configEventUnlink
+	configEventClone
+)
+
+type bpfCollectorConfig struct {
+	EnabledEvents uint32
+
+	SuccessfulOnly uint8
+	OpenWriteOnly  uint8
+
+	Reserved [2]uint8
+}
+
+var agentConfig config
+
+type pathOption int
+
+const (
+	includePath pathOption = iota
+	excludePath
+)
+
+func pathHasPrefix(pathname string, prefix string) bool {
+	return strings.HasPrefix(pathname, prefix)
+}
+
+func pathInList(pathname string, option pathOption) bool {
+	switch option {
+	case includePath:
+		for _, path := range agentConfig.Filters.IncludePaths {
+			if pathHasPrefix(pathname, path) {
+				return true
+			}
+		}
+
+	case excludePath:
+		for _, path := range agentConfig.Filters.ExcludePaths {
+			if pathHasPrefix(pathname, path) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+func checkPath(pathname string) bool {
+	if agentConfig.Filters.FollowOnlyInclude {
+		return pathInList(pathname, includePath)
+	} else if agentConfig.Filters.FollowOnlyExclude {
+		return pathInList(pathname, excludePath)
+	}
+
+	return false
+}
+
+func prepareBPFConfig(cfg *config) bpfCollectorConfig {
+	var bpfConfig bpfCollectorConfig
+
+	if cfg.Events.TCP {
+		bpfConfig.EnabledEvents |= configEventTCP
+	}
+
+	if cfg.Events.Open {
+		bpfConfig.EnabledEvents |= configEventOpen
+	}
+
+	if cfg.Events.Execve {
+		bpfConfig.EnabledEvents |= configEventExecve
+	}
+
+	if cfg.Events.Rename {
+		bpfConfig.EnabledEvents |= configEventRename
+	}
+
+	if cfg.Events.Chmod {
+		bpfConfig.EnabledEvents |= configEventChmod
+	}
+
+	if cfg.Events.Unlink {
+		bpfConfig.EnabledEvents |= configEventUnlink
+	}
+
+	if cfg.Events.Clone {
+		bpfConfig.EnabledEvents |= configEventClone
+	}
+
+	if cfg.Filters.SuccessfulOnly {
+		bpfConfig.SuccessfulOnly = 1
+	}
+
+	if cfg.Filters.Open.WriteOnly {
+		bpfConfig.OpenWriteOnly = 1
+	}
+
+	return bpfConfig
+}
+
 func resolveFDPath(pid uint32, fd int32) (string, error) {
 	procPath := fmt.Sprintf("/proc/%d/fd/%d", pid, fd)
 
@@ -138,16 +241,9 @@ func resolveFDPath(pid uint32, fd int32) (string, error) {
 }
 
 func main() {
-	if len(os.Args) != 2 {
-		os.Exit(1)
+	if err := parseConfig(&agentConfig); err != nil {
+		log.Fatalf("failed to load config: %v", err)
 	}
-
-	portValue, err := strconv.ParseUint(os.Args[1], 10, 16)
-	if err != nil {
-		log.Fatalf("invalid port: %v", err)
-	}
-
-	port := uint16(portValue)
 
 	spec, err := ebpf.LoadCollectionSpec("collector.bpf.o")
 	if err != nil {
@@ -160,15 +256,17 @@ func main() {
 	}
 	defer collection.Close()
 
-	configMap, ok := collection.Maps["tcp_connection_config"]
+	configMap, ok := collection.Maps["config_map"]
 	if !ok {
-		log.Fatal("failed to find map tcp_connection_config")
+		log.Fatal("failed to find config_map")
 	}
+
+	bpfConfig := prepareBPFConfig(&agentConfig)
 
 	var key uint32
 
-	if err := configMap.Put(key, port); err != nil {
-		log.Fatalf("failed to update tcp_connection_config: %v", err)
+	if err := configMap.Put(key, bpfConfig); err != nil {
+		log.Fatalf("failed to update config_map: %v", err)
 	}
 
 	links, err := attachPrograms(spec, collection)
@@ -200,8 +298,6 @@ func main() {
 		<-signals
 		reader.Close()
 	}()
-
-	fmt.Printf("Started on port %d\n", port)
 
 	if err := connectToAnalyzer(); err != nil {
 		log.Printf("failed to connect to analyzer: %v", err)
@@ -277,12 +373,18 @@ func handleEvent(data []byte) error {
 			return err
 		}
 
+		pathname := cString(event.Pathname[:])
+
+		if !checkPath(pathname) {
+			return nil
+		}
+
 		fmt.Printf(
 			"[EVENT_EXECVE] pid=%d uid=%d comm=%s file=%s argv0=%s argv1=%s argv2=%s\n",
 			event.Header.Pid,
 			event.Header.Uid,
 			cString(event.Header.Comm[:]),
-			cString(event.Pathname[:]),
+			pathname,
 			cString(event.Argv[0][:]),
 			cString(event.Argv[1][:]),
 			cString(event.Argv[2][:]),
@@ -292,32 +394,6 @@ func handleEvent(data []byte) error {
 			log.Printf("failed to send execve event to analyzer: %v", err)
 		}
 
-	case eventOpenat: // TODELETE: Not used
-		var event openingEvent
-
-		if err := binary.Read(
-			bytes.NewReader(data),
-			binary.LittleEndian,
-			&event,
-		); err != nil {
-			return err
-		}
-
-		// TODO: too much noise
-		fmt.Printf(
-			"[EVENT_OPENAT] pid=%d uid=%d comm=%s file=%s dirfd=%d flags=%d mode=%d\n",
-			event.Header.Pid,
-			event.Header.Uid,
-			cString(event.Header.Comm[:]),
-			cString(event.Pathname[:]),
-			event.Dirfd,
-			event.Flags,
-			event.Mode,
-		)
-
-		if err := sendOpenatEventToAnalyzer(&event); err != nil {
-			log.Printf("failed to send openat event to analyzer: %v", err)
-		}
 	case eventOpenatExit:
 		var event openingEvent
 
@@ -329,17 +405,22 @@ func handleEvent(data []byte) error {
 			return err
 		}
 
-		// TODO: too much noise
+		pathname := cString(event.Pathname[:])
+
+		if !checkPath(pathname) {
+			return nil
+		}
+
 		fmt.Printf(
 			"[EVENT_OPENAT] pid=%d uid=%d comm=%s file=%s dirfd=%d flags=%d mode=%d res=%d duration=%d\n",
 			event.Header.Pid,
 			event.Header.Uid,
 			cString(event.Header.Comm[:]),
-			cString(event.Pathname[:]),
+			pathname,
 			event.Dirfd,
 			event.Flags,
 			event.Mode,
-			int64(event.Header.Res),
+			event.Header.Res,
 			event.DurationNs,
 		)
 
@@ -394,6 +475,10 @@ func handleEvent(data []byte) error {
 		)
 
 		if err == nil {
+			if !checkPath(cString(event.Pathname[:])) {
+				return nil
+			}
+
 			fmt.Printf(
 				"[EVENT_(F)CHMOD] pid=%d fd=%d file=%s mode=%04o res=%d\n",
 				event.Header.Pid,
@@ -424,12 +509,18 @@ func handleEvent(data []byte) error {
 			return err
 		}
 
+		pathname := cString(event.Pathname[:])
+
+		if !checkPath(pathname) {
+			return nil
+		}
+
 		fmt.Printf(
 			"[EVENT_UNLINK] pid=%d uid=%d comm=%s file=%s fd=%d flags=%d res=%d\n",
 			event.Header.Pid,
 			event.Header.Uid,
 			cString(event.Header.Comm[:]),
-			cString(event.Pathname[:]),
+			pathname,
 			event.Fd,
 			event.Flags,
 			event.Header.Res,

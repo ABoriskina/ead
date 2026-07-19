@@ -12,8 +12,9 @@ BPF_CFLAGS = -O2 -g -Wall -target bpf -D__TARGET_ARCH_x86 $(INCLUDES)
 BPF_SRC = $(BPF_DIR)/collector.bpf.c
 BPF_OBJ = $(BUILD_DIR)/collector.bpf.o
 BPF_HEADERS = \
-    $(BPF_DIR)/collector.h \
-    $(BPF_DIR)/vmlinux.h
+	$(BPF_DIR)/collector.h \
+	$(BPF_DIR)/collector-config.h \
+	$(BPF_DIR)/vmlinux.h
 
 USER_SRC = $(wildcard $(USER_DIR)/*.go)
 USER_BIN = $(BUILD_DIR)/agent
@@ -24,6 +25,7 @@ all: $(BUILD_DIR) $(BPF_OBJ) $(USER_BIN)
 
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
+	cp bpf-config.json $(BUILD_DIR)/bpf-config.json
 
 $(BPF_OBJ): $(BPF_SRC) $(BPF_HEADERS)
 	$(CLANG) $(BPF_CFLAGS) -c $< -o $@

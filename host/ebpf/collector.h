@@ -1,3 +1,4 @@
+#include "collector-config.h"
 #include "vmlinux.h"
 #include <bpf/bpf_helpers.h>
 
@@ -9,6 +10,13 @@
 #define MAX_PATH_LEN 256
 #define MAX_ARG_LEN 64
 #define MAX_ARGS 3
+
+#define O_ACCMODE 00000003
+#define O_WRONLY 00000001
+#define O_RDWR 00000002
+#define O_CREAT 00000100
+#define O_TRUNC 00001000
+#define O_APPEND 00002000
 
 enum event_type
 {
@@ -145,14 +153,21 @@ struct
     __uint(max_entries, 256 * 1024);
 } events SEC(".maps");
 
-// TODO: universal cfg
-struct
+/*struct
 {
     __uint(type, BPF_MAP_TYPE_ARRAY);
     __uint(max_entries, 1);
     __type(key, __u32);
     __type(value, __u16);
-} tcp_connection_config SEC(".maps");
+} tcp_connection_config SEC(".maps");*/
+
+struct
+{
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __uint(max_entries, 1);
+    __type(key, __u32);
+    __type(value, struct bpf_collector_config);
+} config_map SEC(".maps");
 
 struct
 {

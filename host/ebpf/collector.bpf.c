@@ -1,11 +1,47 @@
 #include "collector.h"
 
+static __always_inline const struct bpf_collector_config *get_config(void)
+{
+    __u32 key = 0;
+    return bpf_map_lookup_elem(&config_map, &key);
+}
+
+static __always_inline bool event_enabled(__u32 event)
+{
+    const struct bpf_collector_config *config = get_config();
+    if (!config)
+        return false;
+
+    return (config->enabled_events & event) != 0;
+}
+
+static __always_inline bool open_modifies_file(__u32 flags)
+{
+    __u32 access_mode = flags & O_ACCMODE;
+    if (access_mode == O_WRONLY || access_mode == O_RDWR)
+        return true;
+
+    if (flags & O_CREAT)
+        return true;
+
+    if (flags & O_TRUNC)
+        return true;
+
+    if (flags & O_APPEND)
+        return true;
+
+    return false;
+}
+
 /*-----------------------------------------------------------------*/
 /*------------------------ TCP CONNECTIONS ------------------------*/
 /*-----------------------------------------------------------------*/
 SEC("tracepoint/sock/inet_sock_set_state")
 int trace_tcp_state(struct trace_event_raw_inet_sock_set_state *ctx)
 {
+    if (!event_enabled(CONFIG_EVENT_TCP))
+        return 0;
+
     if (ctx->family != AF_INET)
         return 0;
 
@@ -13,15 +49,6 @@ int trace_tcp_state(struct trace_event_raw_inet_sock_set_state *ctx)
         return 0;
 
     if (ctx->newstate != TCP_ESTABLISHED)
-        return 0;
-
-    __u32 key = 0;
-    __u16 *target_port = bpf_map_lookup_elem(&tcp_connection_config, &key);
-
-    if (!target_port)
-        return 0;
-
-    if (ctx->dport != *target_port)
         return 0;
 
     struct tcp_connection_event *e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
@@ -55,6 +82,9 @@ int trace_tcp_state(struct trace_event_raw_inet_sock_set_state *ctx)
 static __always_inline int save_execve_event(__s32 fd, const char *pathname, const char *const *argv, __u32 flags,
                                              __u32 syscall_type)
 {
+    if (!event_enabled(CONFIG_EVENT_EXECVE))
+        return 0;
+
     if (!pathname)
         return 0;
 
@@ -186,6 +216,14 @@ int trace_execveat_exit(struct trace_event_raw_sys_exit *ctx)
 /*-----------------------------------------------------------------*/
 static __always_inline int save_open_event(__s32 dfd, const char *pathname, __s32 flags, __s32 mode, __u32 syscall_type)
 {
+    const struct bpf_collector_config *config = get_config();
+    if (!config)
+        return 0;
+    if (!(config->enabled_events & CONFIG_EVENT_OPEN))
+        return 0;
+    if (config->open_write_only && !open_modifies_file(flags))
+        return 0;
+
     struct pending_openat pending = {};
 
     pending.o_event.header.type = EVENT_OPENAT;
@@ -246,6 +284,20 @@ static __always_inline int save_open_event_exit(__s64 res, __u32 syscall_type)
     if (!pending)
         return 0;
 
+    // configuration check
+    const struct bpf_collector_config *config = get_config();
+    if (!config)
+    {
+        bpf_map_delete_elem(&pending_openat_map, &tid);
+        return 0;
+    }
+    if (config->successful_only && res < 0)
+    {
+        bpf_map_delete_elem(&pending_openat_map, &tid);
+        return 0;
+    }
+    // end configuration check
+
     struct opening_event *e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
     if (!e)
     {
@@ -299,6 +351,9 @@ int trace_openat_exit(struct trace_event_raw_sys_exit *ctx)
 static __always_inline int save_rename_event(const char *oldname, const char *newname, __s32 olddirfd, __s32 newdirfd,
                                              __u32 flags, __u32 syscall_type)
 {
+    if (!event_enabled(CONFIG_EVENT_RENAME))
+        return 0;
+
     if (!oldname || !newname)
         return 0;
 
@@ -378,6 +433,20 @@ static __always_inline int save_rename_event_exit(__s64 res, __u32 syscall_type)
     if (!pending)
         return 0;
 
+    // configuration check
+    const struct bpf_collector_config *config = get_config();
+    if (!config)
+    {
+        bpf_map_delete_elem(&pending_rename_map, &tid);
+        return 0;
+    }
+    if (config->successful_only && res < 0)
+    {
+        bpf_map_delete_elem(&pending_rename_map, &tid);
+        return 0;
+    }
+    // end configuration check
+
     struct renaming_event *e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
     if (!e)
     {
@@ -434,6 +503,9 @@ int trace_renameat2_exit(struct trace_event_raw_sys_exit *ctx)
 static __always_inline int save_fchmod_event(__s32 dfd, const char *pathname, __s32 mode, __s32 flags,
                                              __u32 syscall_type)
 {
+    if (!event_enabled(CONFIG_EVENT_CHMOD))
+        return 0;
+
     struct opening_event e = {};
 
     e.header.type = EVENT_FCHMOD;
@@ -515,6 +587,20 @@ static __always_inline int save_fchmod_event_exit(__s64 res, __u32 syscall_type)
     if (!pending)
         return 0;
 
+    // configuration check
+    const struct bpf_collector_config *config = get_config();
+    if (!config)
+    {
+        bpf_map_delete_elem(&pending_fchmod_map, &tid);
+        return 0;
+    }
+    if (config->successful_only && res < 0)
+    {
+        bpf_map_delete_elem(&pending_fchmod_map, &tid);
+        return 0;
+    }
+    // end configuration check
+
     struct opening_event *e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
     if (!e)
     {
@@ -589,6 +675,9 @@ int trace_fchmodat2_exit(struct trace_event_raw_sys_exit *ctx)
 /*-----------------------------------------------------------------*/
 static __always_inline int save_unlink_event(__s32 fd, const char *pathname, __s32 flags, __u32 syscall_type)
 {
+    if (!event_enabled(CONFIG_EVENT_UNLINK))
+        return 0;
+
     struct unlinking_event pending = {};
 
     pending.header.type = EVENT_UNLINK;
@@ -644,6 +733,20 @@ static __always_inline int save_unlink_event_exit(__s64 res, __u32 syscall_type)
     if (!pending)
         return 0;
 
+    // configuration check
+    const struct bpf_collector_config *config = get_config();
+    if (!config)
+    {
+        bpf_map_delete_elem(&pending_unlink_map, &tid);
+        return 0;
+    }
+    if (config->successful_only && res < 0)
+    {
+        bpf_map_delete_elem(&pending_unlink_map, &tid);
+        return 0;
+    }
+    // end configuration check
+
     struct unlinking_event *e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
     if (!e)
     {
@@ -694,6 +797,9 @@ int trace_unlinkat_exit(struct trace_event_raw_sys_exit *ctx)
 static __always_inline int save_clone_event(__u64 flags, __u64 stack, __u64 stack_size, __u64 parent_tid,
                                             __u64 child_tid, __u64 tls, __u64 exit_signal, __u32 syscall_type)
 {
+    if (!event_enabled(CONFIG_EVENT_CLONE))
+        return 0;
+
     struct cloning_event pending = {};
 
     pending.header.type = EVENT_CLONE;
@@ -772,6 +878,20 @@ static __always_inline int save_clone_event_exit(__s64 res, __u32 syscall_type)
     struct cloning_event *pending = bpf_map_lookup_elem(&pending_clone_map, &tid);
     if (!pending)
         return 0;
+
+    // configuration check
+    const struct bpf_collector_config *config = get_config();
+    if (!config)
+    {
+        bpf_map_delete_elem(&pending_clone_map, &tid);
+        return 0;
+    }
+    if (config->successful_only && res < 0)
+    {
+        bpf_map_delete_elem(&pending_clone_map, &tid);
+        return 0;
+    }
+    // end configuration check
 
     struct cloning_event *e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
     if (!e)

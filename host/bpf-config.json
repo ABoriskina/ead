@@ -1,0 +1,26 @@
+{
+  "comment" : "to eBPF",
+  "events": {
+    "tcp": true,
+    "open": false,
+    "execve": true,
+    "rename": true,
+    "chmod": true,
+    "unlink": true,
+    "clone": false
+  },
+  "filters": {
+    "successful_only": false,
+
+    "open": {
+      "write_only": false
+    },
+
+    "comment" : "to agent",
+    "follow_only_include": true,
+    "follow_only_exclude": false,
+
+    "include_paths": ["/tmp"],
+    "exclude_paths": []
+  }
+}
