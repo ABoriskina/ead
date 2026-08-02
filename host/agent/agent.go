@@ -93,8 +93,10 @@ type openingEvent struct {
 	Header   eventsHeader
 	Pathname [maxPathLen]byte
 	Dirfd    int32
+	Fd       int32
 	Flags    uint32
 	Mode     uint32
+	_        uint32
 
 	DurationNs uint64
 }
@@ -119,13 +121,15 @@ type unlinkingEvent struct {
 type cloningEvent struct {
 	Header eventsHeader
 
-	Flags      uint64
-	Stack      uint64
-	StackSize  uint64
-	ParentTid  uint64
-	ChildTid   uint64
-	Tls        uint64
-	ExitSignal uint64
+	Flags         uint64
+	Stack         uint64
+	StackSize     uint64
+	ParentTid     uint64
+	ChildTid      uint64
+	CreatedTaskID int32
+	_             uint32
+	Tls           uint64
+	ExitSignal    uint64
 }
 
 const (

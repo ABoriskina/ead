@@ -106,6 +106,7 @@ struct opening_event // fchmod uses the same struct
     struct events_header header;
     char pathname[MAX_PATH_LEN];
     __s32 dirfd; // fchmod fd
+    __s32 fd;
     __u32 flags;
     __u32 mode;
     __u64 duration_ns;
@@ -144,6 +145,7 @@ struct cloning_event
     __u64 stack_size;
     __u64 parent_tid;
     __u64 child_tid;
+    __s32 created_task_id;
     __u64 tls;
     __u64 exit_signal;
 };

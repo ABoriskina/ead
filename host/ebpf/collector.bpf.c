@@ -67,6 +67,7 @@ int trace_tcp_state(struct trace_event_raw_inet_sock_set_state *ctx)
     e->header.type = EVENT_CONNECT;
     e->header.pid = bpf_get_current_pid_tgid() >> 32;
     e->header.uid = bpf_get_current_uid_gid() & 0xffffffff;
+    e->header.timestamp_ns = bpf_ktime_get_ns();
 
     bpf_get_current_comm(&e->header.comm, sizeof(e->header.comm));
 
@@ -327,6 +328,7 @@ static __always_inline int save_open_event_exit(__s64 res, __u32 syscall_type)
     e->dirfd = pending->o_event.dirfd;
     e->flags = pending->o_event.flags;
     e->mode = pending->o_event.mode;
+    e->fd = res;
 
     e->header.type = EVENT_OPENAT_EXIT;
     e->header.res = res;
@@ -385,6 +387,7 @@ static __always_inline int save_rename_event(const char *oldname, const char *ne
     __u64 pid_tgid = bpf_get_current_pid_tgid();
     e->header.pid = pid_tgid >> 32;
     e->header.tid = pid_tgid & 0xffffffff;
+    e->header.timestamp_ns = bpf_ktime_get_ns();
 
     e->header.uid = bpf_get_current_uid_gid() & 0xffffffff;
 
@@ -918,6 +921,10 @@ static __always_inline int save_clone_event_exit(__s64 res, __u32 syscall_type)
     *e = *pending;
     e->header.type = EVENT_CLONE_EXIT;
     e->header.res = res;
+    if (res >= 0)
+        e->created_task_id = (__s32)res;
+    else
+        e->created_task_id = -1;
 
     bpf_map_delete_elem(&pending_clone_map, &tid);
 
