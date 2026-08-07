@@ -96,7 +96,6 @@ type openingEvent struct {
 	Fd       int32
 	Flags    uint32
 	Mode     uint32
-	_        uint32
 
 	DurationNs uint64
 }
