@@ -376,15 +376,8 @@ func main() {
 		reader.Close()
 	}()
 
-	if err := connectToAnalyzer(); err != nil {
-		log.Printf("failed to connect to analyzer: %v", err)
-	}
-
-	defer func() {
-		if analyzerConn != nil {
-			analyzerConn.Close()
-		}
-	}()
+	startAnalyzerReconnect()
+	defer closeAnalyzerConnection()
 
 	for {
 		record, err := reader.Read()

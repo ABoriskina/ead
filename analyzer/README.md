@@ -5,6 +5,8 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install prometheus-client
 pip install black
+pip install pyvis
+pip install networkx
 ```
 
 # Формат событий
@@ -49,4 +51,5 @@ pip install black
 | analyzer.py | http://localhost:9200 |
 
 
-
+# Описание
+Запускается два потока - correlation_worker и handle_agent. Handle agent запускается по потоку на каждого агента, отправляет полученные данные в общую очередь, откуда читает correlation worker.

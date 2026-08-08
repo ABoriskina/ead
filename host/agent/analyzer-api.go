@@ -3,8 +3,10 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net"
 	"strconv"
+	"sync"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -15,7 +17,10 @@ const (
 	analyzerPort = 9000
 )
 
-var analyzerConn net.Conn
+var (
+	analyzerConn   net.Conn
+	analyzerConnMu sync.Mutex
+)
 
 type analyzerProcess struct {
 	Pid  uint32 `json:"pid"`
@@ -38,17 +43,58 @@ func getTimestamp() string {
 }
 
 func connectToAnalyzer() error {
+	analyzerConnMu.Lock()
+	if analyzerConn != nil {
+		analyzerConnMu.Unlock()
+		return nil
+	}
+	analyzerConnMu.Unlock()
+
 	address := fmt.Sprintf("%s:%d", analyzerIP, analyzerPort)
 
-	conn, err := net.Dial("tcp", address)
+	conn, err := net.DialTimeout("tcp", address, 5*time.Second)
 	if err != nil {
 		return fmt.Errorf("connect analyzer: %w", err)
 	}
 
+	analyzerConnMu.Lock()
+	defer analyzerConnMu.Unlock()
+	if analyzerConn != nil {
+		conn.Close()
+		return nil
+	}
+
 	analyzerConn = conn
-	fmt.Printf("Connected to analyzer %s:%d\n", analyzerIP, analyzerPort)
+	log.Printf("Connected to analyzer %s:%d\n", analyzerIP, analyzerPort)
 
 	return nil
+}
+
+func startAnalyzerReconnect() {
+	if err := connectToAnalyzer(); err != nil {
+		log.Printf("Failed to connect to analyzer: %v; retrying in one minute\n", err)
+	}
+
+	go func() {
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
+
+		for range ticker.C {
+			if err := connectToAnalyzer(); err != nil {
+				log.Printf("Failed to connect to analyzer: %v; retrying in one minute\n", err)
+			}
+		}
+	}()
+}
+
+func closeAnalyzerConnection() {
+	analyzerConnMu.Lock()
+	defer analyzerConnMu.Unlock()
+
+	if analyzerConn != nil {
+		analyzerConn.Close()
+		analyzerConn = nil
+	}
 }
 
 const (
@@ -101,10 +147,6 @@ func eventRealtimeTimestamp(timestampNs uint64) string {
 }
 
 func sendEventToAnalyzer(data interface{}, eventType eventType) error {
-	if analyzerConn == nil {
-		return nil
-	}
-
 	var event analyzerEvent
 
 	switch eventType {
@@ -220,6 +262,13 @@ func sendAnalyzerEvent(event analyzerEvent) error {
 	}
 
 	data = append(data, '\n')
+
+	analyzerConnMu.Lock()
+	defer analyzerConnMu.Unlock()
+	if analyzerConn == nil {
+		return nil
+	}
+
 	if _, err := analyzerConn.Write(data); err != nil {
 		analyzerConn.Close()
 		analyzerConn = nil

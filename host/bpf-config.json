@@ -46,12 +46,13 @@
     "rename": {
       "successful_only": false,
 
-      "follow_all": true,
+      "follow_all": false,
       "follow_only_include": false,
-      "follow_only_exclude": false,
+      "follow_only_exclude": true,
 
       "include_paths": [],
-      "exclude_paths": []
+      "comment": "home folder will be added in web interface",
+      "exclude_paths": ["/home/alena/snap/firefox/common/.cache", "/dev/shm/.org.chromium.Chromium", "/home/alena/snap/firefox/common/.mozilla/firefox/"]
     },
     "chmod": {
       "successful_only": false,
@@ -66,12 +67,13 @@
     "unlink": {
       "successful_only": false,
 
-      "follow_all": true,
+      "follow_all": false,
       "follow_only_include": false,
-      "follow_only_exclude": false,
+      "follow_only_exclude": true,
 
       "include_paths": [],
-      "exclude_paths": []
+      "comment": "home folder will be added in web interface",
+      "exclude_paths": ["/home/alena/snap/firefox/common/.cache", "/dev/shm/.org.chromium.Chromium", "/home/alena/snap/firefox/common/.mozilla/firefox/"]
     },
     "clone": {
       "successful_only": false,
