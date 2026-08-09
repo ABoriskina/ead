@@ -1,0 +1,28 @@
+{
+    "time_window" : 5,
+    "traversal_depth" : 10,
+    "base_weights" : {
+        "process" : {
+            "max_weight" : 2,
+            "create" : 1,
+            "execute" : 2,
+            "exit" : 0
+        },
+        "file" : {
+            "max_weight" : 5,
+            "open_read" : 1,
+            "open_write" : 3,
+            "create" : 4,
+            "rename" : 2,
+            "change_permissions" : 5,
+            "delete" : 3,
+            "execute" : 5
+        },
+        "network" : {
+            "max_weight" : 2,
+            "connect" : 1,
+            "establish" : 2,
+            "close" : 0
+        }
+    }
+}

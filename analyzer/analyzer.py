@@ -8,6 +8,8 @@ from typing import Any
 
 from prometheus_client import Counter, Gauge, start_http_server
 
+from .correlation import get_context_weight, get_adjusted_weight
+from .correlation_config import load_correlation_config
 from .graph import EventGraph
 from .visualization import visualize_graph
 
@@ -21,6 +23,7 @@ METRICS_PORT = 9200
 
 event_queue = queue.Queue(maxsize=10_000)
 event_graph = EventGraph()
+correlation_config = load_correlation_config()
 graph_output_path = Path(__file__).resolve().parent / "event-graph.html"
 
 events_total = Counter(
@@ -43,6 +46,11 @@ tcp_connections_by_process = Counter(
 last_event_timestamp = Gauge(
     "ebpf_ids_last_event_timestamp_seconds",
     "Timestamp of the last received event",
+)
+
+alerts_total = Counter(
+    "ead_alerts_total",
+    "Total number of generated alerts",
 )
 
 
@@ -69,11 +77,37 @@ def process_node_id(event: dict[str, Any]) -> str:
     return f"process:{event.get('host', 'unknown')}:{process.get('pid', 'unknown')}"
 
 
-def add_event_to_graph(event: dict[str, Any]) -> None:
+def classify_operation(
+    event_type: str,
+    event_data: dict[str, Any],
+) -> tuple[str, str]:
+    raw_operation = str(event_data.get("operation", "UNKNOWN"))
+
+    if event_type == "EVENT_CLONE":
+        return "process", "CREATE"
+    if event_type == "EVENT_EXECVE":
+        return "file", "EXECUTE"
+    if event_type == "EVENT_OPENAT":
+        if event_data.get("is_create_requested") and event_data.get("success"):
+            return "file", "CREATE"
+        return "file", raw_operation
+    if event_type in {"EVENT_RENAME", "EVENT_FCHMOD", "EVENT_UNLINK"}:
+        return "file", raw_operation
+    if event_type == "EVENT_CONNECT":
+        return "network", raw_operation
+
+    return "unknown", raw_operation
+
+
+def add_event_to_graph(event: dict[str, Any]) -> float:
     event_type = event.get("event_type", "unknown")
     event_data = event.get("event", {})
     process = event.get("process", {})
-    operation = event_data.get("operation", "UNKNOWN")
+    raw_operation = str(event_data.get("operation", "UNKNOWN"))
+    operation_entity_type, operation = classify_operation(
+        event_type,
+        event_data,
+    )
     timestamp_ns = int(event_data.get("timestamp_ns", 0))
 
     process_id = process_node_id(event)
@@ -90,6 +124,25 @@ def add_event_to_graph(event: dict[str, Any]) -> None:
         for name, value in event_data.items()
         if name not in {"operation", "timestamp_ns"}
     }
+    edge_attributes["source_operation"] = raw_operation
+    edge_attributes["operation_entity_type"] = operation_entity_type
+
+    if operation_entity_type != "unknown":
+        base_weight = correlation_config.base_weight_for(
+            operation_entity_type,
+            operation
+        )
+        edge_attributes["base_weight"] = (base_weight)
+
+        normalized_base_weight = correlation_config.normalized_base_weight_for(
+            operation_entity_type,
+            operation,
+        )
+        edge_attributes["normalized_base_weight"] = (normalized_base_weight)
+    else:
+        edge_attributes["base_weight"] = 0.0
+        edge_attributes["normalized_base_weight"] = 0.0
+        normalized_base_weight = 0.0
 
     if event_type == "EVENT_CONNECT":
         address = event_data.get("dst_ip", "unknown")
@@ -120,7 +173,11 @@ def add_event_to_graph(event: dict[str, Any]) -> None:
             old_id,
             "RENAME_REQUEST",
             timestamp_ns,
-            **edge_attributes,
+            source_operation="RENAME_REQUEST",
+            operation_entity_type="synthetic",
+            base_weight=0.0,
+            normalized_base_weight=0.0,
+            synthetic=True,
         )
         event_graph.add_event(
             old_id, new_id, operation, timestamp_ns, **edge_attributes
@@ -140,9 +197,10 @@ def add_event_to_graph(event: dict[str, Any]) -> None:
         event_graph.add_event(
             process_id, target_id, operation, timestamp_ns, **edge_attributes
         )
+    return normalized_base_weight
 
 
-def handle_event(event: dict[str, Any]):
+def handle_event(event: dict[str, Any]) -> float:
     """
     {
         "timestamp":"2026-08-29T09:16:04.368074Z",
@@ -158,13 +216,23 @@ def handle_event(event: dict[str, Any]):
     """
     update_metrics(event)
 
+    normalized_base_weight = add_event_to_graph(event)
+    visualize_graph(event_graph.graph, str(graph_output_path)) # TODO: move somewhere else
+    print(
+        f"Graph updated: {event_graph.graph.number_of_nodes()} nodes, "
+        f"{event_graph.graph.number_of_edges()} edges; file://{graph_output_path}"
+    )
     if is_anchor_event(event):
-        add_event_to_graph(event)
-        visualize_graph(event_graph.graph, str(graph_output_path))
-        print(
-            f"Graph updated: {event_graph.graph.number_of_nodes()} nodes, "
-            f"{event_graph.graph.number_of_edges()} edges; file://{graph_output_path}"
-        )
+        context_weight = get_context_weight(event, event_graph.graph, correlation_config)
+        print(f"Context weight: {context_weight:.6f}")
+
+        adjusted_weight = get_adjusted_weight(context_weight, normalized_base_weight)
+        print(f"Adjusted weight: {adjusted_weight:.6f}")
+
+        if adjusted_weight > 0: # plug
+            alerts_total.inc()
+
+        return adjusted_weight
 
 
 def correlation_worker():
