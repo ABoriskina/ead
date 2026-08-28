@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sync"
 )
 
 const (
@@ -46,6 +47,8 @@ type config struct {
 	Events  eventConfig  `json:"events"`
 	Filters filterConfig `json:"filters"`
 }
+
+var agentConfigMu sync.RWMutex
 
 func parseConfig(cfg *config) error {
 	if cfg == nil {

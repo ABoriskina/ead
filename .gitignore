@@ -1,4 +1,6 @@
 .venv
 host/build
+analyzer/build
+web/build
 notes/
 *.html

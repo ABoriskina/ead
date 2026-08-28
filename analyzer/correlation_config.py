@@ -1,4 +1,5 @@
 import json
+import shutil
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -6,7 +7,11 @@ from types import MappingProxyType
 from typing import Any
 
 
-DEFAULT_CONFIG_PATH = Path(__file__).with_name("correlation-config.json")
+ANALYZER_PATH = Path(__file__).resolve().parent
+
+SOURCE_CONFIG_PATH = ANALYZER_PATH / "correlation-config.json"
+BUILD_PATH = ANALYZER_PATH / "build"
+CONFIG_PATH = BUILD_PATH / "correlation-config.json"
 
 SUPPORTED_OPERATIONS = {
     "process": {
@@ -84,8 +89,17 @@ class CorrelationConfig:
         return base_weight / max_weight
 
 
+def prepare_correlation_config() -> Path:
+    BUILD_PATH.mkdir(parents=True, exist_ok=True)
+
+    if not CONFIG_PATH.exists():
+        shutil.copy2(SOURCE_CONFIG_PATH, CONFIG_PATH)
+
+    return CONFIG_PATH
+
+
 def load_correlation_config(
-    config_path: str | Path = DEFAULT_CONFIG_PATH,
+    config_path: str | Path = CONFIG_PATH,
 ) -> CorrelationConfig:
     path = Path(config_path)
 

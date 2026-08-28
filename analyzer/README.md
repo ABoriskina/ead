@@ -49,6 +49,7 @@ pip install networkx
 | Grafana | http://localhost:3001 |
 | Prometheus | http://localhost:9090 |
 | analyzer.py | http://localhost:9200 |
+| web | http://localhost:8080 |
 
 
 # Описание

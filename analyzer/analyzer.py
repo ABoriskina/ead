@@ -1,15 +1,21 @@
 import json
+import os
 from pathlib import Path
 import queue
 import socket
 import threading
 import time
 from typing import Any
+from urllib import request
 
 from prometheus_client import Counter, Gauge, start_http_server
 
 from .correlation import get_context_weight, get_adjusted_weight
-from .correlation_config import load_correlation_config
+from .correlation_config import (
+    CONFIG_PATH,
+    load_correlation_config,
+    prepare_correlation_config,
+)
 from .graph import EventGraph
 from .visualization import visualize_graph
 
@@ -22,9 +28,15 @@ METRICS_PORT = 9200
 
 
 event_queue = queue.Queue(maxsize=10_000)
+alert_queue = queue.Queue(maxsize=1_000)
 event_graph = EventGraph()
-correlation_config = load_correlation_config()
+
+correlation_config_path = prepare_correlation_config()
+correlation_config = load_correlation_config(correlation_config_path)
+correlation_config_mtime = correlation_config_path.stat().st_mtime_ns
+
 graph_output_path = Path(__file__).resolve().parent / "event-graph.html"
+WEB_ALERT_URL = os.getenv("EAD_WEB_ALERT_URL", "http://127.0.0.1:8080/api/alerts")
 
 events_total = Counter(
     "ead_events_total",
@@ -52,6 +64,51 @@ alerts_total = Counter(
     "ead_alerts_total",
     "Total number of generated alerts",
 )
+
+
+def reload_correlation_config_if_changed():
+    global correlation_config, correlation_config_mtime
+
+    config_path = CONFIG_PATH
+    current_mtime = config_path.stat().st_mtime_ns
+    if current_mtime == correlation_config_mtime:
+        return
+
+    try:
+        next_config = load_correlation_config(config_path)
+    except Exception as error:
+        print(f"Cannot reload correlation config: {error}")
+        return
+
+    correlation_config = next_config
+    correlation_config_mtime = current_mtime
+    print(f"Reloaded correlation config: {config_path}")
+
+
+def publish_alert(event: dict[str, Any], score: float):
+    try:
+        alert_queue.put_nowait({"score": score, "event": event})
+    except queue.Full:
+        print("Web alert queue is full, alert dropped")
+
+
+def alert_publisher():
+    while True:
+        alert = alert_queue.get()
+        try:
+            payload = json.dumps(alert).encode("utf-8")
+            http_request = request.Request(
+                WEB_ALERT_URL,
+                data=payload,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with request.urlopen(http_request, timeout=1):
+                pass
+        except Exception as error:
+            print(f"Cannot publish alert to web interface: {error}")
+        finally:
+            alert_queue.task_done()
 
 
 def update_metrics(event: dict[str, Any]):
@@ -214,6 +271,7 @@ def handle_event(event: dict[str, Any]) -> float:
             "result":0,"success":true,"syscall_type":11,"timestamp_ns":"1787994964366003142","type":12}
     }
     """
+    reload_correlation_config_if_changed()
     update_metrics(event)
 
     normalized_base_weight = add_event_to_graph(event)
@@ -229,8 +287,9 @@ def handle_event(event: dict[str, Any]) -> float:
         adjusted_weight = get_adjusted_weight(context_weight, normalized_base_weight)
         print(f"Adjusted weight: {adjusted_weight:.6f}")
 
-        if adjusted_weight > 0: # plug
+        if adjusted_weight > 1: # plug
             alerts_total.inc()
+            publish_alert(event, adjusted_weight)
 
         return adjusted_weight
 
@@ -298,6 +357,11 @@ def main():
         target=correlation_worker, daemon=True
     )
     worker.start()
+
+    publisher = threading.Thread(
+        target=alert_publisher, daemon=True
+    )
+    publisher.start()
 
     start_http_server(METRICS_PORT, addr=METRICS_HOST)
     run_agent_server()

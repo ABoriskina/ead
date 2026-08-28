@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"golang.org/x/sys/unix"
 
@@ -346,6 +347,8 @@ func main() {
 		log.Fatalf("failed to update config_map: %v", err)
 	}
 
+	go watchConfig(configMap, key)
+
 	links, err := attachPrograms(spec, collection)
 	if err != nil {
 		log.Fatalf("failed to attach BPF programs: %v", err)
@@ -396,12 +399,47 @@ func main() {
 	}
 }
 
+func watchConfig(configMap *ebpf.Map, key uint32) {
+	var lastModTime time.Time
+	if info, err := os.Stat(cfgPath); err == nil {
+		lastModTime = info.ModTime()
+	}
+
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for range ticker.C {
+		info, err := os.Stat(cfgPath)
+		if err != nil || !info.ModTime().After(lastModTime) {
+			continue
+		}
+
+		var next config
+		if err := parseConfig(&next); err != nil {
+			log.Printf("failed to reload config: %v", err)
+			continue
+		}
+		if err := configMap.Put(key, prepareBPFConfig(&next)); err != nil {
+			log.Printf("failed to apply reloaded BPF config: %v", err)
+			continue
+		}
+
+		agentConfigMu.Lock()
+		agentConfig = next
+		agentConfigMu.Unlock()
+		lastModTime = info.ModTime()
+		log.Printf("Reloaded %s", cfgPath)
+	}
+}
+
 func handleEvent(data []byte) error {
 	if len(data) < 4 {
 		return fmt.Errorf("event is too small")
 	}
 
 	eventType := eventType(binary.LittleEndian.Uint32(data[:4]))
+	agentConfigMu.RLock()
+	currentConfig := agentConfig
+	agentConfigMu.RUnlock()
 
 	switch eventType {
 	case eventConnect:
@@ -419,7 +457,7 @@ func handleEvent(data []byte) error {
 		if err != nil {
 			pathname = "<unresolved>"
 		}
-		if !checkPath(pathname, &agentConfig.Filters.TCP) {
+		if !checkPath(pathname, &currentConfig.Filters.TCP) {
 			return nil
 		}
 
@@ -453,7 +491,7 @@ func handleEvent(data []byte) error {
 
 		pathname := cString(event.Pathname[:])
 
-		if !checkPath(pathname, &agentConfig.Filters.Execve) {
+		if !checkPath(pathname, &currentConfig.Filters.Execve) {
 			return nil
 		}
 
@@ -485,7 +523,7 @@ func handleEvent(data []byte) error {
 
 		pathname := cString(event.Pathname[:])
 
-		if !checkPath(pathname, &agentConfig.Filters.Open) {
+		if !checkPath(pathname, &currentConfig.Filters.Open) {
 			return nil
 		}
 
@@ -519,8 +557,8 @@ func handleEvent(data []byte) error {
 
 		oldname := cString(event.Oldname[:])
 		newname := cString(event.Newname[:])
-		if !checkPath(oldname, &agentConfig.Filters.Rename) &&
-			!checkPath(newname, &agentConfig.Filters.Rename) {
+		if !checkPath(oldname, &currentConfig.Filters.Rename) &&
+			!checkPath(newname, &currentConfig.Filters.Rename) {
 			return nil
 		}
 
@@ -565,7 +603,7 @@ func handleEvent(data []byte) error {
 			pathname = "<unresolved>"
 		}
 
-		if !checkPath(pathname, &agentConfig.Filters.Chmod) {
+		if !checkPath(pathname, &currentConfig.Filters.Chmod) {
 			return nil
 		}
 
@@ -594,7 +632,7 @@ func handleEvent(data []byte) error {
 
 		pathname := cString(event.Pathname[:])
 
-		if !checkPath(pathname, &agentConfig.Filters.Unlink) {
+		if !checkPath(pathname, &currentConfig.Filters.Unlink) {
 			return nil
 		}
 
