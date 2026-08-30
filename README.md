@@ -74,6 +74,13 @@ Linux tracepoints ->
 | `9090/HTTP` | prometheus | grafana и пользователь обращаются к prometheus API и интерфейсу |
 | `3001/HTTP` | grafana | Внешний порт `3001` перенаправляется на порт `3000` контейнера |
 
+### Веб-консоль
+![Консоль](images/console.png)
+
+### Дашборды
+
+![Dashboards](images/dashboards.png)
+
 ## BEFORE START
 
 ```bash
