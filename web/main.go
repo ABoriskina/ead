@@ -38,12 +38,17 @@ func main() {
 	}
 
 	mux := http.NewServeMux()
+
+	staticPath := projectFile("web/static")
+	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.Dir(staticPath))))
+
 	mux.HandleFunc("GET /", app.index)
 	mux.HandleFunc("GET /api/config/{name}", app.getConfig)
 	mux.HandleFunc("PUT /api/config/{name}", app.putConfig)
 	mux.HandleFunc("GET /api/alerts/count", app.alertCount)
 	mux.HandleFunc("GET /api/alerts", app.alertStream)
 	mux.HandleFunc("POST /api/alerts", app.receiveAlert)
+	mux.HandleFunc("GET /api/agent/status", app.agentStatus)
 
 	address := env("EAD_WEB_ADDR", ":8080")
 	log.Printf("EAD web interface is listening on %s", address)
@@ -237,6 +242,17 @@ func (app *application) alertCount(w http.ResponseWriter, _ *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprintf(w, `{"count":%s}`, strconv.FormatFloat(count, 'f', -1, 64))
+}
+
+func (app *application) agentStatus(w http.ResponseWriter, _ *http.Request) {
+	count, err := prometheusCounter(app.metricsURL, "ead_agents_connected")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprintf(w, `{"connected":%t,"count":%s}`, count > 0, strconv.FormatFloat(count, 'f', -1, 64))
 }
 
 func prometheusCounter(url, metric string) (float64, error) {

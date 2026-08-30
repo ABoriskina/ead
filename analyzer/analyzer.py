@@ -65,6 +65,11 @@ alerts_total = Counter(
     "Total number of generated alerts",
 )
 
+agents_connected = Gauge(
+    "ead_agents_connected",
+    "Number of agents currently connected to the analyzer",
+)
+
 
 def reload_correlation_config_if_changed():
     global correlation_config, correlation_config_mtime
@@ -287,7 +292,7 @@ def handle_event(event: dict[str, Any]) -> float:
         adjusted_weight = get_adjusted_weight(context_weight, normalized_base_weight)
         print(f"Adjusted weight: {adjusted_weight:.6f}")
 
-        if adjusted_weight > 1: # plug
+        if adjusted_weight > 0: # plug
             alerts_total.inc()
             publish_alert(event, adjusted_weight)
 
@@ -311,28 +316,30 @@ def correlation_worker():
 
 def handle_agent(conn: socket.socket, addr: tuple[str, int]):
     print(f"Agent connected: {addr}")
+    agents_connected.inc()
+    try:
+        with conn:
+            file = conn.makefile("r", encoding="utf-8")
+            for line in file:
+                line = line.strip()
+                if not line:
+                    continue
 
-    with conn:
-        file = conn.makefile("r", encoding="utf-8")
-        for line in file:
-            line = line.strip()
-            if not line:
-                continue
+                print(f"Received raw: {line}")
 
-            print(f"Received raw: {line}")
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError as error:
+                    print(f"Invalid JSON: {error}")
+                    print(f"Raw data: {line}")
+                    continue
 
-            try:
-                event = json.loads(line)
-            except json.JSONDecodeError as error:
-                print(f"Invalid JSON: {error}")
-                print(f"Raw data: {line}")
-                continue
-
-            try:
-                event_queue.put(event, timeout=1)
-            except queue.Full:
-                print("Event queue is full, event dropped")
-
+                try:
+                    event_queue.put(event, timeout=1)
+                except queue.Full:
+                    print("Event queue is full, event dropped")
+    finally:
+        agents_connected.dec()
     print(f"Agent disconnected: {addr}")
 
 
