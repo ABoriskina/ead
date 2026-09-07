@@ -1,0 +1,3 @@
+[submodule "ssca-tests"]
+	path = ssca-tests
+	url = git@github.com:ABoriskina/ssca-tests.git
