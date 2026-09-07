@@ -2,6 +2,7 @@ from typing import Any
 import networkx as nx
 from .correlation_config import CorrelationConfig
 from .graph import get_subgraph
+from .patterns import check_in_patterns, pattern_variant_lengths
 
 
 NANOSECONDS_IN_SECOND = 1_000_000_000
@@ -44,7 +45,7 @@ def get_context_weight(
     event: dict[str, Any],
     graph: nx.MultiDiGraph,
     config: CorrelationConfig,
-) -> float:
+) -> tuple[float, int]:
     event_data = event.get("event", {})
     anchor_timestamp_ns = int(event_data.get("timestamp_ns", 0))
     anchor_operation = event_data.get("operation", "UNKNOWN")
@@ -55,7 +56,7 @@ def get_context_weight(
         anchor_operation,
     )
     if anchor_edge is None:
-        return 0.0
+        return 0.0, 0
 
     anchor_source, _, _ = anchor_edge
     _, anchor_target, _ = anchor_edge
@@ -68,10 +69,23 @@ def get_context_weight(
     )
 
     contributions: list[float] = []
-    for source, target, key, attributes in local_subgraph.edges(
-        keys=True,
-        data=True,
-    ):
+    pattern_similarity = get_pattern_similarity(
+        graph,
+        anchor_timestamp_ns,
+        config.time_window,
+        anchor_edge,
+        {
+            node_id
+            for node_id, attributes in local_subgraph.nodes(data=True)
+            if attributes.get("entity_type") == "process"
+        },
+    )
+
+    graph_edges = sorted(
+        local_subgraph.edges(keys=True, data=True),
+        key=lambda edge: int(edge[3].get("timestamp_ns", 0)),
+    )
+    for source, target, key, attributes in graph_edges:
         if (source, target, key) == anchor_edge:
             continue
         if attributes.get("synthetic", False):
@@ -96,9 +110,60 @@ def get_context_weight(
         )
 
     if not contributions:
-        return 0.0
+        return 0.0, pattern_similarity
 
-    return sum(contributions) / len(contributions)
+    return sum(contributions) / len(contributions), pattern_similarity
+
+
+def get_pattern_similarity(
+    graph: nx.MultiDiGraph,
+    anchor_timestamp_ns: int,
+    time_window_seconds: float,
+    anchor_edge: tuple[str, str, int],
+    lineage_process_nodes: set[str],
+    pattern_name: str = "SH-1",
+) -> int:
+    window_start_ns = anchor_timestamp_ns - int(
+        time_window_seconds * NANOSECONDS_IN_SECOND
+    )
+    candidate_edges = sorted(
+        (
+            edge
+            for edge in graph.edges(keys=True, data=True)
+            if window_start_ns
+            <= int(edge[3].get("timestamp_ns", 0))
+            <= anchor_timestamp_ns
+            and edge[0] in lineage_process_nodes
+        ),
+        key=lambda edge: int(edge[3].get("timestamp_ns", 0)),
+    )
+
+    variant_lengths = pattern_variant_lengths(pattern_name)
+    variant_steps = [0] * len(variant_lengths)
+    for source, target, key, attributes in candidate_edges:
+        for variant_index, variant_length in enumerate(variant_lengths):
+            step = variant_steps[variant_index]
+            if step >= variant_length:
+                continue
+            if not check_in_patterns(
+                graph.nodes[source],
+                graph.nodes[target],
+                key,
+                attributes,
+                step,
+                pattern_name,
+                variant_index,
+            ):
+                continue
+
+            variant_steps[variant_index] += 1
+            if (
+                variant_steps[variant_index] == variant_length
+                and (source, target, key) == anchor_edge
+            ):
+                return variant_length
+
+    return 0
 
 
 def get_adjusted_weight(context_weight, normalized_base_weight) -> float:

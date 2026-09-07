@@ -18,7 +18,6 @@ from .correlation_config import (
 )
 from .graph import EventGraph
 from .visualization import visualize_graph
-from .templates import shai_hulud_20
 
 
 AGENT_HOST = "0.0.0.0"
@@ -200,6 +199,7 @@ def add_event_to_graph(event: dict[str, Any]) -> float:
     }
     edge_attributes["source_operation"] = raw_operation
     edge_attributes["operation_entity_type"] = operation_entity_type
+    edge_attributes["event_type"] = event_type
 
     if operation_entity_type != "unknown":
         base_weight = correlation_config.base_weight_for(
@@ -317,6 +317,9 @@ def handle_event(event: dict[str, Any]) -> float:
     reload_correlation_config_if_changed()
     update_metrics(event)
 
+    event_data = event.get("event", {})
+    timestamp_ns = int(event_data.get("timestamp_ns", 0))
+
     normalized_base_weight = add_event_to_graph(event)
     visualize_graph(event_graph.graph, str(graph_output_path)) # TODO: move somewhere else
     print(
@@ -324,13 +327,13 @@ def handle_event(event: dict[str, Any]) -> float:
         f"{event_graph.graph.number_of_edges()} edges; file://{graph_output_path}"
     )
     if is_anchor_event(event):
-        context_weight = get_context_weight(event, event_graph.graph, correlation_config)
-        print(f"Context weight: {context_weight:.6f}")
+        context_weight, pattern_similarity = get_context_weight(event, event_graph.graph, correlation_config)
+        print(f"Context weight: {context_weight:.6f}, pattern: {pattern_similarity}, timestamp: {timestamp_ns}")
 
         adjusted_weight = get_adjusted_weight(context_weight, normalized_base_weight)
         print(f"Adjusted weight: {adjusted_weight:.6f}")
 
-        if adjusted_weight > 0: # plug
+        if pattern_similarity > 0:
             alerts_total.inc()
             publish_alert(event, adjusted_weight)
 
