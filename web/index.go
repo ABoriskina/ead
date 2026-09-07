@@ -60,6 +60,19 @@ const indexHTML = `<!doctype html>
         letter-spacing:2px;
         margin:0
       }
+      .graph-link {
+        margin-left: auto;
+        padding: 10px 16px;
+        border: 1px solid #ff751f;
+        border-radius: 8px;
+        color: #ff751f;
+        text-decoration: none;
+        white-space: nowrap;
+      }
+      .graph-link:hover {
+        background: #ff751f;
+        color: #102232;
+      }
       .agent-status {
         display: flex;
         align-items: center;
@@ -183,6 +196,7 @@ const indexHTML = `<!doctype html>
     <header class="brand">
       <img class="brand-icon" src="/static/logo.png" alt="EAD">
       <h1>Консоль eBPF anomaly detector</h1>
+      <a class="graph-link" href="/event-graph" target="_blank" rel="noopener">Открыть граф событий</a>
     </header>
 
     <div class="agent-status">

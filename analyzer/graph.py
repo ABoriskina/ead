@@ -54,6 +54,16 @@ def get_subgraph(
 class EventGraph:
     def __init__(self):
         self.graph = nx.MultiDiGraph()
+        self._current_process_nodes: dict[str, str] = {}
+
+    def current_process_node(self, process_id: str) -> str:
+        return self._current_process_nodes.get(process_id, process_id)
+
+    def register_process_node(self, process_id: str):
+        self._current_process_nodes.setdefault(process_id, process_id)
+
+    def set_current_process_node(self, process_id: str, node_id: str):
+        self._current_process_nodes[process_id] = node_id
 
     def add_process(self, process_id: str, **attributes):
         self.graph.add_node(

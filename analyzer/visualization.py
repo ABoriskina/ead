@@ -1,13 +1,58 @@
 from html import escape
+from pathlib import Path
 
 import networkx as nx
 from pyvis.network import Network
 
 NODE_COLORS = {
     "process": "#4C78A8",
-    "file": "#F2CF5B",
-    "network": "#E45756",
+    "file": "#FF751F",
+    "network": "#56B7E4",
 }
+
+FULLSCREEN_STYLE = """
+<style>
+html, body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+.card {
+  width: 100% !important;
+  height: 100% !important;
+  border: 0 !important;
+}
+#mynetwork {
+  position: fixed !important;
+  inset: 0;
+  width: 100vw !important;
+  height: 100vh !important;
+  padding: 0 !important;
+  border: 0 !important;
+  float: none !important;
+}
+#loadingBar {
+  position: fixed !important;
+  inset: 0;
+  width: 100vw !important;
+  height: 100vh !important;
+}
+</style>
+"""
+
+FIT_GRAPH_SCRIPT = """
+              drawGraph();
+              network.once("stabilizationIterationsDone", function () {
+                  network.fit({animation: false});
+              });
+              window.setTimeout(function () {
+                  network.fit({animation: false});
+              }, 250);
+              window.addEventListener("resize", function () {
+                  network.fit({animation: false});
+              });
+"""
 
 
 def visualize_graph(
@@ -15,8 +60,8 @@ def visualize_graph(
     output_path: str = "event-graph.html",
 ):
     network = Network(
-        height="800px",
-        width="100%",
+        height="100vh",
+        width="100vw",
         directed=True,
         bgcolor="#1e1e1e",
         font_color="white",
@@ -38,10 +83,13 @@ def visualize_graph(
 
         network.add_node(
             node_id,
-            label=attributes.get("comm")
-            or attributes.get("pathname")
-            or attributes.get("address")
-            or str(node_id),
+            label = (
+                f"{attributes.get('comm')} ({attributes.get('pid')})"
+                if entity_type == "process"
+                else attributes.get("pathname")
+                or attributes.get("address")
+                or str(node_id)
+            ),
             title="<br>".join(title_lines),
             color=NODE_COLORS.get(entity_type, "#999999"),
             shape=get_node_shape(entity_type),
@@ -97,7 +145,10 @@ def visualize_graph(
     }
     """)
 
-    network.write_html(output_path)
+    html = network.generate_html()
+    html = html.replace("</head>", f"{FULLSCREEN_STYLE}</head>", 1)
+    html = html.replace("              drawGraph();", FIT_GRAPH_SCRIPT, 1)
+    Path(output_path).write_text(html, encoding="utf-8")
 
 
 def get_node_shape(entity_type: str) -> str:

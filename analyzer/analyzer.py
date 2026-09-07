@@ -18,6 +18,7 @@ from .correlation_config import (
 )
 from .graph import EventGraph
 from .visualization import visualize_graph
+from .templates import shai_hulud_20
 
 
 AGENT_HOST = "0.0.0.0"
@@ -134,9 +135,18 @@ def is_anchor_event(_event: dict[str, Any]) -> bool:
     return True # plug
 
 
-def process_node_id(event: dict[str, Any]) -> str:
+def logical_process_node_id(event: dict[str, Any]) -> str:
     process = event.get("process", {})
     return f"process:{event.get('host', 'unknown')}:{process.get('pid', 'unknown')}"
+
+
+def process_node_id(event: dict[str, Any]) -> str:
+    return event_graph.current_process_node(logical_process_node_id(event))
+
+
+def executable_name(pathname: Any) -> str:
+    name = Path(str(pathname)).name
+    return name or "<unknown>"
 
 
 def classify_operation(
@@ -172,7 +182,9 @@ def add_event_to_graph(event: dict[str, Any]) -> float:
     )
     timestamp_ns = int(event_data.get("timestamp_ns", 0))
 
-    process_id = process_node_id(event)
+    logical_process_id = logical_process_node_id(event)
+    event_graph.register_process_node(logical_process_id)
+    process_id = event_graph.current_process_node(logical_process_id)
     event_graph.add_process(
         process_id,
         pid=process.get("pid"),
@@ -206,7 +218,27 @@ def add_event_to_graph(event: dict[str, Any]) -> float:
         edge_attributes["normalized_base_weight"] = 0.0
         normalized_base_weight = 0.0
 
-    if event_type == "EVENT_CONNECT":
+    if event_type == "EVENT_EXECVE" and event_data.get("success", False):
+        pathname = event_data.get("pathname", "<unknown>")
+        image_id = f"{logical_process_id}:exec:{timestamp_ns}"
+        event_graph.add_process(
+            image_id,
+            pid=process.get("pid"),
+            tid=process.get("tid"),
+            uid=process.get("uid"),
+            comm=executable_name(pathname),
+            executable=pathname,
+        )
+        event_graph.add_event(
+            process_id,
+            image_id,
+            operation,
+            timestamp_ns,
+            **edge_attributes,
+        )
+        event_graph.set_current_process_node(logical_process_id, image_id)
+
+    elif event_type == "EVENT_CONNECT":
         address = event_data.get("dst_ip", "unknown")
         port = event_data.get("dst_port", "unknown")
         target_id = f"network:{address}:{port}"
@@ -248,7 +280,13 @@ def add_event_to_graph(event: dict[str, Any]) -> float:
     elif event_type == "EVENT_CLONE":
         child_pid = event_data.get("created_task_id")
         child_id = f"process:{event.get('host', 'unknown')}:{child_pid}"
-        event_graph.add_process(child_id, pid=child_pid, comm="<unknown>")
+        if child_id not in event_graph.graph:
+            event_graph.add_process(
+                child_id,
+                pid=child_pid,
+                comm="<unknown>",
+            )
+        event_graph.register_process_node(child_id)
         event_graph.add_event(
             process_id, child_id, operation, timestamp_ns, **edge_attributes
         )

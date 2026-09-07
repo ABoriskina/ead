@@ -22,6 +22,7 @@ const maxBodySize = 1 << 20
 type application struct {
 	correlationPath string
 	bpfPath         string
+	graphPath       string
 	metricsURL      string
 
 	mu          sync.RWMutex
@@ -33,6 +34,7 @@ func main() {
 	app := &application{
 		correlationPath: env("EAD_CORRELATION_CONFIG", projectFile("analyzer/build/correlation-config.json")),
 		bpfPath:         env("EAD_BPF_CONFIG", projectFile("host/build/bpf-config.json")),
+		graphPath:       env("EAD_GRAPH_PATH", projectFile("analyzer/event-graph.html")),
 		metricsURL:      env("EAD_METRICS_URL", "http://127.0.0.1:9200/metrics"),
 		subscribers:     make(map[chan []byte]struct{}),
 	}
@@ -43,6 +45,7 @@ func main() {
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.Dir(staticPath))))
 
 	mux.HandleFunc("GET /", app.index)
+	mux.HandleFunc("GET /event-graph", app.eventGraph)
 	mux.HandleFunc("GET /api/config/{name}", app.getConfig)
 	mux.HandleFunc("PUT /api/config/{name}", app.putConfig)
 	mux.HandleFunc("GET /api/alerts/count", app.alertCount)
@@ -104,6 +107,24 @@ func (app *application) configPath(name string) (string, bool) {
 func (app *application) index(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = io.WriteString(w, indexHTML)
+}
+
+func (app *application) eventGraph(w http.ResponseWriter, r *http.Request) {
+	info, err := os.Stat(app.graphPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			http.Error(w, "граф ещё не сформирован", http.StatusNotFound)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if !info.Mode().IsRegular() {
+		http.Error(w, "файл графа недоступен", http.StatusNotFound)
+		return
+	}
+
+	http.ServeFile(w, r, app.graphPath)
 }
 
 func (app *application) getConfig(w http.ResponseWriter, r *http.Request) {

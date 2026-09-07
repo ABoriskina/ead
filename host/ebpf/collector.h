@@ -67,7 +67,9 @@ enum syscall_types
     UNLINKAT_SYSCALL,
 
     CLONE_SYSCALL,
-    CLONE3_SYSCALL
+    CLONE3_SYSCALL,
+    FORK_SYSCALL,
+    VFORK_SYSCALL
 };
 
 struct events_header

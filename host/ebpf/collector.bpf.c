@@ -888,6 +888,20 @@ int trace_enter_clone3(struct trace_event_raw_sys_enter *ctx)
                             args.exit_signal, CLONE3_SYSCALL);
 }
 
+SEC("tracepoint/syscalls/sys_enter_fork")
+int trace_fork(struct trace_event_raw_sys_enter *ctx)
+{
+    /* no args */
+    return save_clone_event(0, 0, 0, 0, 0, 0, 0, FORK_SYSCALL);
+}
+
+SEC("tracepoint/syscalls/sys_enter_vfork")
+int trace_vfork(struct trace_event_raw_sys_enter *ctx)
+{
+    /* no args */
+    return save_clone_event(0, 0, 0, 0, 0, 0, 0, VFORK_SYSCALL);
+}
+
 static __always_inline int save_clone_event_exit(__s64 res, __u32 syscall_type)
 {
     __u64 pid_tgid = bpf_get_current_pid_tgid();
@@ -953,6 +967,28 @@ int trace_clone3_exit(struct trace_event_raw_sys_exit *ctx)
     */
 
     return save_clone_event_exit((__s64)ctx->ret, CLONE3_SYSCALL);
+}
+
+SEC("tracepoint/syscalls/sys_exit_fork")
+int trace_fork_exit(struct trace_event_raw_sys_exit *ctx)
+{
+    /*
+    0x%lx
+    REC->ret
+    */
+
+    return save_clone_event_exit((__s64)ctx->ret, FORK_SYSCALL);
+}
+
+SEC("tracepoint/syscalls/sys_exit_vfork")
+int trace_vfork_exit(struct trace_event_raw_sys_exit *ctx)
+{
+    /*
+    0x%lx
+    REC->ret
+    */
+
+    return save_clone_event_exit((__s64)ctx->ret, VFORK_SYSCALL);
 }
 
 char LICENSE[] SEC("license") = "GPL";

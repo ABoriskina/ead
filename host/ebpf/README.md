@@ -4,6 +4,9 @@ Execute command in ```ebpf/``` catalog
 ```
 sudo bpftool btf dump file /sys/kernel/btf/vmlinux format c > vmlinux.h
 ```
+```
+sudo cat /sys/kernel/debug/tracing/events/syscalls/sys_exit_fork/format
+```
 Hooks
 ```
 execve
