@@ -20,6 +20,10 @@ const (
 var (
 	analyzerConn   net.Conn
 	analyzerConnMu sync.Mutex
+
+	analyzerEventsSent              uint64
+	analyzerEventsWithoutConnection uint64
+	analyzerSendErrors              uint64
 )
 
 type analyzerProcess struct {
@@ -197,6 +201,23 @@ func sendEventToAnalyzer(data interface{}, eventType eventType) error {
 			event.Event["fd"] = int32(e.Header.Res)
 		}
 
+	case eventFileOpen:
+		e, ok := data.(*fileOpenEvent)
+		if !ok {
+			return fmt.Errorf("eventFileOpen: unexpected data type %T", data)
+		}
+
+		operation := operationOpenRead
+		if e.Flags&unix.O_ACCMODE == unix.O_WRONLY || e.Flags&unix.O_ACCMODE == unix.O_RDWR {
+			operation = operationOpenWrite
+		}
+		event = newAnalyzerEvent(e.Header, "EVENT_OPENAT", operation)
+		event.Event["pathname"] = cString(e.Pathname[:])
+		event.Event["flags"] = e.Flags
+		event.Event["mode"] = e.Mode
+		event.Event["is_create_requested"] = e.Flags&unix.O_CREAT != 0
+		event.Event["source"] = "lsm"
+
 	case eventRenameExit:
 		e, ok := data.(*renamingEvent)
 		if !ok {
@@ -279,15 +300,19 @@ func sendAnalyzerEvent(event analyzerEvent) error {
 	analyzerConnMu.Lock()
 	defer analyzerConnMu.Unlock()
 	if analyzerConn == nil {
+		analyzerEventsWithoutConnection++
 		return nil
 	}
 
 	if _, err := analyzerConn.Write(data); err != nil {
+		analyzerSendErrors++
 		analyzerConn.Close()
 		analyzerConn = nil
 
 		return fmt.Errorf("send analyzer event: %w", err)
 	}
+
+	analyzerEventsSent++
 
 	return nil
 }

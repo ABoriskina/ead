@@ -1,4 +1,6 @@
 #include "collector.h"
+#include <bpf/bpf_core_read.h>
+#include <bpf/bpf_tracing.h>
 
 static __always_inline const struct bpf_collector_config *get_config(void)
 {
@@ -40,6 +42,57 @@ static __always_inline bool open_modifies_file(__u32 flags)
         return true;
 
     return false;
+}
+
+/*-----------------------------------------------------------------*/
+/*-------------------------- LSM FILE OPEN ------------------------*/
+/*-----------------------------------------------------------------*/
+SEC("lsm/file_open")
+int BPF_PROG(trace_lsm_file_open, struct file *file, int ret)
+{
+    if (ret != 0)
+        return ret;
+
+    if (!event_enabled(CONFIG_EVENT_LSM_FILE_OPEN))
+        return 0;
+
+    if (!file)
+        return 0;
+
+    __u32 flags = BPF_CORE_READ(file, f_flags);
+    const struct bpf_collector_config *config = get_config();
+    if (!config)
+        return 0;
+    if (config->open_write_only && !open_modifies_file(flags))
+        return 0;
+
+    struct file_open_event *e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
+    if (!e)
+        return 0;
+
+    __u64 pid_tgid = bpf_get_current_pid_tgid();
+    e->header.type = EVENT_FILE_OPEN;
+    e->header.pid = pid_tgid >> 32;
+    e->header.tid = (__u32)pid_tgid;
+    e->header.uid = (__u32)bpf_get_current_uid_gid();
+    e->header.timestamp_ns = bpf_ktime_get_ns();
+    e->header.res = 0;
+    e->header.syscall_type = FILE_OPEN_LSM;
+    bpf_get_current_comm(e->header.comm, sizeof(e->header.comm));
+
+    e->flags = flags;
+    e->mode = BPF_CORE_READ(file, f_inode, i_mode);
+
+    struct path *path = __builtin_preserve_access_index(&file->f_path);
+    long path_length = bpf_d_path(path, e->pathname, sizeof(e->pathname));
+    if (path_length < 0)
+    {
+        bpf_ringbuf_discard(e, 0);
+        return 0;
+    }
+
+    bpf_ringbuf_submit(e, 0);
+    return 0;
 }
 
 /*-----------------------------------------------------------------*/

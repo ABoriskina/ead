@@ -50,6 +50,8 @@ enum event_type
     EVENT_ACCESS,
     EVENT_FACCESSAT,
     EVENT_FACCESSAT2,
+
+    EVENT_FILE_OPEN,
 };
 
 enum syscall_types
@@ -84,7 +86,9 @@ enum syscall_types
     NEWFSTATAT_SYSCALL,
     ACCESS_SYSCALL,
     FACCESSAT_SYSCALL,
-    FACCESSAT2_SYSCALL
+    FACCESSAT2_SYSCALL,
+
+    FILE_OPEN_LSM
 };
 
 struct events_header
@@ -175,6 +179,14 @@ struct file_probe_event
     __u32 mode;
     __u32 flags;
     __u32 mask;
+};
+
+struct file_open_event
+{
+    struct events_header header;
+    char pathname[MAX_PATH_LEN];
+    __u32 flags;
+    __u32 mode;
 };
 
 struct

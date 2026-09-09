@@ -8,7 +8,8 @@
     "chmod": true,
     "unlink": true,
     "clone": true,
-    "stat": true
+    "stat": true,
+    "lsm_file_open": true
   },
   "filters": {
     "successful_only": false,

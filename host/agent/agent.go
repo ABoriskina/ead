@@ -60,6 +60,8 @@ const (
 	eventAccess
 	eventFaccessat
 	eventFaccessat2
+
+	eventFileOpen
 )
 
 type eventsHeader struct {
@@ -148,6 +150,13 @@ type fileProbeEvent struct {
 	Mask     uint32
 }
 
+type fileOpenEvent struct {
+	Header   eventsHeader
+	Pathname [maxPathLen]byte
+	Flags    uint32
+	Mode     uint32
+}
+
 const (
 	configEventTCP uint32 = 1 << iota
 	configEventOpen
@@ -157,6 +166,7 @@ const (
 	configEventUnlink
 	configEventClone
 	configEventStat
+	configEventLSMFileOpen
 )
 
 type bpfCollectorConfig struct {
@@ -176,6 +186,11 @@ type processFD struct {
 }
 
 var openedFilePaths = make(map[processFD]string)
+
+var receivedEvents uint64
+var eventHandlingErrors uint64
+var receivedEventsByType [eventFileOpen + 1]uint64
+var receivedEventsWithUnknownType uint64
 
 type pathOption int
 
@@ -265,6 +280,9 @@ func prepareBPFConfig(cfg *config) bpfCollectorConfig {
 	}
 	if cfg.Events.Stat {
 		bpfConfig.EnabledEvents |= configEventStat
+	}
+	if cfg.Events.LSMFileOpen {
+		bpfConfig.EnabledEvents |= configEventLSMFileOpen
 	}
 
 	if cfg.Filters.SuccessfulOnly || cfg.Filters.TCP.SuccessfulOnly {
@@ -428,6 +446,7 @@ func main() {
 
 	startAnalyzerReconnect()
 	defer closeAnalyzerConnection()
+	defer printAgentSummary()
 
 	for {
 		record, err := reader.Read()
@@ -440,9 +459,96 @@ func main() {
 			continue
 		}
 
+		receivedEvents++
+		if len(record.RawSample) >= 4 {
+			kind := eventType(binary.LittleEndian.Uint32(record.RawSample[:4]))
+			if kind <= eventFileOpen {
+				receivedEventsByType[kind]++
+			} else {
+				receivedEventsWithUnknownType++
+			}
+		} else {
+			receivedEventsWithUnknownType++
+		}
+
 		if err := handleEvent(record.RawSample); err != nil {
+			eventHandlingErrors++
 			log.Printf("failed to handle event: %v", err)
 		}
+	}
+}
+
+func printAgentSummary() {
+	notForwarded := receivedEvents - analyzerEventsSent
+
+	fmt.Printf(
+		"\n[AGENT_SUMMARY] received_from_bpf=%d sent_to_analyzer=%d not_forwarded=%d no_analyzer_connection=%d handling_errors=%d send_errors=%d\n",
+		receivedEvents,
+		analyzerEventsSent,
+		notForwarded,
+		analyzerEventsWithoutConnection,
+		eventHandlingErrors,
+		analyzerSendErrors,
+	)
+
+	for kind, count := range receivedEventsByType {
+		if count == 0 {
+			continue
+		}
+
+		fmt.Printf(
+			"[AGENT_EVENT_COUNT] type=%s count=%d\n",
+			eventTypeName(eventType(kind)),
+			count,
+		)
+	}
+
+	if receivedEventsWithUnknownType > 0 {
+		fmt.Printf(
+			"[AGENT_EVENT_COUNT] type=UNKNOWN count=%d\n",
+			receivedEventsWithUnknownType,
+		)
+	}
+}
+
+func eventTypeName(kind eventType) string {
+	switch kind {
+	case eventExecve:
+		return "EVENT_EXECVE_ENTER"
+	case eventExecveExit:
+		return "EVENT_EXECVE"
+	case eventConnect:
+		return "EVENT_CONNECT"
+	case eventOpenat:
+		return "EVENT_OPENAT_ENTER"
+	case eventOpenatExit:
+		return "EVENT_OPENAT"
+	case eventRename:
+		return "EVENT_RENAME_ENTER"
+	case eventRenameExit:
+		return "EVENT_RENAME"
+	case eventChmod:
+		return "EVENT_CHMOD_ENTER"
+	case eventChmodExit:
+		return "EVENT_CHMOD"
+	case eventFchmod:
+		return "EVENT_FCHMOD_ENTER"
+	case eventFchmodExit:
+		return "EVENT_FCHMOD"
+	case eventUnlink:
+		return "EVENT_UNLINK_ENTER"
+	case eventUnlinkExit:
+		return "EVENT_UNLINK"
+	case eventClone:
+		return "EVENT_CLONE_ENTER"
+	case eventCloneExit:
+		return "EVENT_CLONE"
+	case eventStat, eventStatx, eventNewfstatat, eventAccess, eventFaccessat, eventFaccessat2:
+		return fileProbeEventName(kind)
+	case eventFileOpen:
+		return "EVENT_FILE_OPEN"
+	default:
+		return fmt.Sprintf("EVENT_TYPE_%d", kind)
 	}
 }
 
@@ -598,6 +704,36 @@ func handleEvent(data []byte) error {
 
 		if err := sendEventToAnalyzer(&event, eventOpenatExit); err != nil {
 			log.Printf("failed to send openat event to analyzer: %v", err)
+		}
+
+	case eventFileOpen:
+		var event fileOpenEvent
+
+		if err := binary.Read(
+			bytes.NewReader(data),
+			binary.LittleEndian,
+			&event,
+		); err != nil {
+			return err
+		}
+
+		pathname := cString(event.Pathname[:])
+		if !checkPath(pathname, &currentConfig.Filters.Open) {
+			return nil
+		}
+
+		fmt.Printf(
+			"[EVENT_FILE_OPEN] pid=%d uid=%d comm=%s file=%s flags=%d mode=%04o source=lsm\n",
+			event.Header.Pid,
+			event.Header.Uid,
+			cString(event.Header.Comm[:]),
+			pathname,
+			event.Flags,
+			event.Mode,
+		)
+
+		if err := sendEventToAnalyzer(&event, eventFileOpen); err != nil {
+			log.Printf("failed to send LSM file_open event to analyzer: %v", err)
 		}
 
 	case eventRenameExit:
@@ -835,6 +971,16 @@ func attachPrograms(
 			symbol := strings.TrimPrefix(section, "kretprobe/")
 
 			l, err := link.Kretprobe(symbol, program, nil)
+			if err != nil {
+				return nil, fmt.Errorf("attach %s: %w", section, err)
+			}
+
+			links = append(links, l)
+
+		case strings.HasPrefix(section, "lsm/"):
+			l, err := link.AttachLSM(link.LSMOptions{
+				Program: program,
+			})
 			if err != nil {
 				return nil, fmt.Errorf("attach %s: %w", section, err)
 			}

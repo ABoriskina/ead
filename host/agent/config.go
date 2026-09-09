@@ -13,14 +13,15 @@ const (
 )
 
 type eventConfig struct {
-	TCP    bool `json:"tcp"`
-	Open   bool `json:"open"`
-	Execve bool `json:"execve"`
-	Rename bool `json:"rename"`
-	Chmod  bool `json:"chmod"`
-	Unlink bool `json:"unlink"`
-	Clone  bool `json:"clone"`
-	Stat   bool `json:"stat"`
+	TCP         bool `json:"tcp"`
+	Open        bool `json:"open"`
+	Execve      bool `json:"execve"`
+	Rename      bool `json:"rename"`
+	Chmod       bool `json:"chmod"`
+	Unlink      bool `json:"unlink"`
+	Clone       bool `json:"clone"`
+	Stat        bool `json:"stat"`
+	LSMFileOpen bool `json:"lsm_file_open"`
 }
 
 type eventFilterConfig struct {
