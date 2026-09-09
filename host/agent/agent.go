@@ -190,7 +190,21 @@ var openedFilePaths = make(map[processFD]string)
 var receivedEvents uint64
 var eventHandlingErrors uint64
 var receivedEventsByType [eventFileOpen + 1]uint64
+var filteredEventsByType [eventFileOpen + 1]uint64
 var receivedEventsWithUnknownType uint64
+var failedOpenatEvents uint64
+var duplicateOpenEvents uint64
+
+const duplicateOpenWindowNs = uint64(100 * time.Millisecond)
+
+type openEventKey struct {
+	pid        uint32
+	pathname   string
+	accessMode uint32
+}
+
+var recentSyscallOpens = make(map[openEventKey]uint64)
+var recentLSMOpens = make(map[openEventKey]uint64)
 
 type pathOption int
 
@@ -480,12 +494,19 @@ func main() {
 
 func printAgentSummary() {
 	notForwarded := receivedEvents - analyzerEventsSent
+	var filteredByPath uint64
+	for _, count := range filteredEventsByType {
+		filteredByPath += count
+	}
 
 	fmt.Printf(
-		"\n[AGENT_SUMMARY] received_from_bpf=%d sent_to_analyzer=%d not_forwarded=%d no_analyzer_connection=%d handling_errors=%d send_errors=%d\n",
+		"\n[AGENT_SUMMARY] received_from_bpf=%d sent_to_analyzer=%d not_forwarded=%d filtered_by_path=%d failed_openat=%d duplicate_openat_lsm=%d no_analyzer_connection=%d handling_errors=%d send_errors=%d\n",
 		receivedEvents,
 		analyzerEventsSent,
 		notForwarded,
+		filteredByPath,
+		failedOpenatEvents,
+		duplicateOpenEvents,
 		analyzerEventsWithoutConnection,
 		eventHandlingErrors,
 		analyzerSendErrors,
@@ -509,6 +530,59 @@ func printAgentSummary() {
 			receivedEventsWithUnknownType,
 		)
 	}
+
+	for kind, count := range filteredEventsByType {
+		if count == 0 {
+			continue
+		}
+
+		fmt.Printf(
+			"[AGENT_FILTERED_COUNT] type=%s count=%d\n",
+			eventTypeName(eventType(kind)),
+			count,
+		)
+	}
+
+	printNpmBaselineEvaluation()
+}
+
+func recordFilteredEvent(kind eventType) {
+	if kind <= eventFileOpen {
+		filteredEventsByType[kind]++
+	}
+}
+
+func recordOpenForDuplicateCounter(
+	isLSM bool,
+	pid uint32,
+	pathname string,
+	flags uint32,
+	timestampNs uint64,
+) {
+	key := openEventKey{
+		pid:        pid,
+		pathname:   pathname,
+		accessMode: flags & uint32(unix.O_ACCMODE),
+	}
+
+	current, opposite := recentSyscallOpens, recentLSMOpens
+	if isLSM {
+		current, opposite = recentLSMOpens, recentSyscallOpens
+	}
+
+	if otherTimestamp, ok := opposite[key]; ok {
+		delta := timestampNs - otherTimestamp
+		if otherTimestamp > timestampNs {
+			delta = otherTimestamp - timestampNs
+		}
+		if delta <= duplicateOpenWindowNs {
+			duplicateOpenEvents++
+			delete(opposite, key)
+			return
+		}
+	}
+
+	current[key] = timestampNs
 }
 
 func eventTypeName(kind eventType) string {
@@ -611,6 +685,7 @@ func handleEvent(data []byte) error {
 			pathname = "<unresolved>"
 		}
 		if !checkPath(pathname, &currentConfig.Filters.TCP) {
+			recordFilteredEvent(eventType)
 			return nil
 		}
 
@@ -645,6 +720,7 @@ func handleEvent(data []byte) error {
 		pathname := cString(event.Pathname[:])
 
 		if !checkPath(pathname, &currentConfig.Filters.Execve) {
+			recordFilteredEvent(eventType)
 			return nil
 		}
 
@@ -679,6 +755,17 @@ func handleEvent(data []byte) error {
 		if err != nil {
 			pathname = eventPathname
 		}
+		if event.Header.Res < 0 {
+			failedOpenatEvents++
+		} else {
+			recordOpenForDuplicateCounter(
+				false,
+				event.Header.Pid,
+				pathname,
+				event.Flags,
+				event.Header.TimestampNs,
+			)
+		}
 		if event.Header.Res >= 0 {
 			openedFilePaths[processFD{pid: event.Header.Pid, fd: int32(event.Header.Res)}] = pathname
 		}
@@ -686,6 +773,7 @@ func handleEvent(data []byte) error {
 		copy(event.Pathname[:], pathname)
 
 		if !checkPath(pathname, &currentConfig.Filters.Open) {
+			recordFilteredEvent(eventType)
 			return nil
 		}
 
@@ -718,7 +806,15 @@ func handleEvent(data []byte) error {
 		}
 
 		pathname := cString(event.Pathname[:])
+		recordOpenForDuplicateCounter(
+			true,
+			event.Header.Pid,
+			pathname,
+			event.Flags,
+			event.Header.TimestampNs,
+		)
 		if !checkPath(pathname, &currentConfig.Filters.Open) {
+			recordFilteredEvent(eventType)
 			return nil
 		}
 
@@ -751,6 +847,7 @@ func handleEvent(data []byte) error {
 		newname := cString(event.Newname[:])
 		if !checkPath(oldname, &currentConfig.Filters.Rename) &&
 			!checkPath(newname, &currentConfig.Filters.Rename) {
+			recordFilteredEvent(eventType)
 			return nil
 		}
 
@@ -799,6 +896,7 @@ func handleEvent(data []byte) error {
 		copy(event.Pathname[:], pathname)
 
 		if !checkPath(pathname, &currentConfig.Filters.Chmod) {
+			recordFilteredEvent(eventType)
 			return nil
 		}
 
@@ -828,6 +926,7 @@ func handleEvent(data []byte) error {
 		pathname := cString(event.Pathname[:])
 
 		if !checkPath(pathname, &currentConfig.Filters.Unlink) {
+			recordFilteredEvent(eventType)
 			return nil
 		}
 
@@ -861,6 +960,7 @@ func handleEvent(data []byte) error {
 			pathname = "<unresolved>"
 		}
 		if !checkPath(pathname, &agentConfig.Filters.Clone) {
+			recordFilteredEvent(eventType)
 			return nil
 		}
 
@@ -903,6 +1003,7 @@ func handleEvent(data []byte) error {
 		copy(event.Pathname[:], pathname)
 
 		if !checkPath(pathname, &currentConfig.Filters.Stat) {
+			recordFilteredEvent(eventType)
 			return nil
 		}
 

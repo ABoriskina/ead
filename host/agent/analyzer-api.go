@@ -286,6 +286,7 @@ func sendEventToAnalyzer(data interface{}, eventType eventType) error {
 		return fmt.Errorf("unsupported analyzer event type: %d", eventType)
 	}
 
+	recordNpmBaselineEvent(data, eventType)
 	return sendAnalyzerEvent(event)
 }
 

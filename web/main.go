@@ -20,10 +20,12 @@ import (
 const maxBodySize = 1 << 20
 
 type application struct {
-	correlationPath string
-	bpfPath         string
-	graphPath       string
-	metricsURL      string
+	correlationPath     string
+	bpfPath             string
+	bpfEventsBackupPath string
+	graphPath           string
+	metricsURL          string
+	configMu            sync.Mutex
 
 	mu          sync.RWMutex
 	alerts      []json.RawMessage
@@ -31,12 +33,17 @@ type application struct {
 }
 
 func main() {
+	bpfPath := env("EAD_BPF_CONFIG", projectFile("host/build/bpf-config.json"))
 	app := &application{
 		correlationPath: env("EAD_CORRELATION_CONFIG", projectFile("analyzer/build/correlation-config.json")),
-		bpfPath:         env("EAD_BPF_CONFIG", projectFile("host/build/bpf-config.json")),
-		graphPath:       env("EAD_GRAPH_PATH", projectFile("analyzer/event-graph.html")),
-		metricsURL:      env("EAD_METRICS_URL", "http://127.0.0.1:9200/metrics"),
-		subscribers:     make(map[chan []byte]struct{}),
+		bpfPath:         bpfPath,
+		bpfEventsBackupPath: env(
+			"EAD_BPF_EVENTS_BACKUP",
+			filepath.Join(filepath.Dir(bpfPath), "bpf-events-backup.json"),
+		),
+		graphPath:   env("EAD_GRAPH_PATH", projectFile("analyzer/event-graph.html")),
+		metricsURL:  env("EAD_METRICS_URL", "http://127.0.0.1:9200/metrics"),
+		subscribers: make(map[chan []byte]struct{}),
 	}
 
 	mux := http.NewServeMux()
@@ -52,6 +59,9 @@ func main() {
 	mux.HandleFunc("GET /api/alerts", app.alertStream)
 	mux.HandleFunc("POST /api/alerts", app.receiveAlert)
 	mux.HandleFunc("GET /api/agent/status", app.agentStatus)
+	mux.HandleFunc("POST /api/collector/stop", app.stopCollector)
+	mux.HandleFunc("GET /api/collector/state", app.collectorState)
+	mux.HandleFunc("PUT /api/collector/state", app.setCollectorState)
 
 	address := env("EAD_WEB_ADDR", ":8080")
 	log.Printf("EAD web interface is listening on %s", address)
@@ -160,12 +170,154 @@ func (app *application) putConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	formatted, _ := json.MarshalIndent(value, "", "    ")
 	formatted = append(formatted, '\n')
+	app.configMu.Lock()
+	defer app.configMu.Unlock()
 	if err := atomicWrite(path, formatted); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = io.WriteString(w, `{"ok":true}`)
+}
+
+func (app *application) stopCollector(w http.ResponseWriter, _ *http.Request) {
+	if err := app.changeCollectorState(false); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = io.WriteString(w, `{"ok":true,"collecting":false}`)
+}
+
+func (app *application) collectorState(w http.ResponseWriter, _ *http.Request) {
+	app.configMu.Lock()
+	defer app.configMu.Unlock()
+
+	data, err := os.ReadFile(app.bpfPath)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	var config map[string]any
+	if err := json.Unmarshal(data, &config); err != nil {
+		http.Error(w, "invalid BPF config: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	events, ok := config["events"].(map[string]any)
+	if !ok {
+		http.Error(w, "BPF config has no events object", http.StatusInternalServerError)
+		return
+	}
+
+	collecting := false
+	for _, value := range events {
+		if enabled, ok := value.(bool); ok && enabled {
+			collecting = true
+			break
+		}
+	}
+
+	_, backupErr := os.Stat(app.bpfEventsBackupPath)
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprintf(
+		w,
+		`{"collecting":%t,"backup_available":%t}`,
+		collecting,
+		backupErr == nil,
+	)
+}
+
+type collectorStateRequest struct {
+	Collecting *bool `json:"collecting"`
+}
+
+func (app *application) setCollectorState(w http.ResponseWriter, r *http.Request) {
+	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBodySize))
+	if err != nil {
+		http.Error(w, "request is too large", http.StatusRequestEntityTooLarge)
+		return
+	}
+
+	var requested collectorStateRequest
+	if err := json.Unmarshal(data, &requested); err != nil || requested.Collecting == nil {
+		http.Error(w, "expected JSON: {\"collecting\": true|false}", http.StatusBadRequest)
+		return
+	}
+
+	if err := app.changeCollectorState(*requested.Collecting); err != nil {
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprintf(w, `{"ok":true,"collecting":%t}`, *requested.Collecting)
+}
+
+func (app *application) changeCollectorState(collecting bool) error {
+	app.configMu.Lock()
+	defer app.configMu.Unlock()
+
+	data, err := os.ReadFile(app.bpfPath)
+	if err != nil {
+		return err
+	}
+
+	var config map[string]any
+	if err := json.Unmarshal(data, &config); err != nil {
+		return fmt.Errorf("invalid BPF config: %w", err)
+	}
+
+	events, ok := config["events"].(map[string]any)
+	if !ok {
+		return errors.New("BPF config has no events object")
+	}
+
+	if collecting {
+		backupData, err := os.ReadFile(app.bpfEventsBackupPath)
+		if err != nil {
+			return fmt.Errorf("read events backup: %w", err)
+		}
+
+		var backup map[string]any
+		if err := json.Unmarshal(backupData, &backup); err != nil {
+			return fmt.Errorf("invalid events backup: %w", err)
+		}
+		config["events"] = backup
+	} else {
+		currentlyCollecting := false
+		for _, value := range events {
+			if enabled, ok := value.(bool); ok && enabled {
+				currentlyCollecting = true
+				break
+			}
+		}
+
+		if currentlyCollecting {
+			backup, err := json.MarshalIndent(events, "", "    ")
+			if err != nil {
+				return err
+			}
+			backup = append(backup, '\n')
+			if err := atomicWrite(app.bpfEventsBackupPath, backup); err != nil {
+				return fmt.Errorf("save events backup: %w", err)
+			}
+		}
+
+		for eventName := range events {
+			events[eventName] = false
+		}
+	}
+
+	formatted, err := json.MarshalIndent(config, "", "    ")
+	if err != nil {
+		return err
+	}
+	formatted = append(formatted, '\n')
+
+	return atomicWrite(app.bpfPath, formatted)
 }
 
 func atomicWrite(path string, data []byte) error {

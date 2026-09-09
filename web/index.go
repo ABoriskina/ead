@@ -97,6 +97,19 @@ const indexHTML = `<!doctype html>
         background: #ff7b72;
         box-shadow: 0 0 8px rgba(255, 123, 114, 0.7);
       }
+      .collector-toggle {
+        display: inline-flex;
+        align-items: center;
+        gap: 9px;
+        margin-left: 18px;
+        cursor: pointer;
+      }
+      .collector-toggle input {
+        width: 42px;
+        height: 22px;
+        accent-color: #ff751f;
+        cursor: pointer;
+      }
       .alert-counter {
         display: flex;
         align-items: center;
@@ -202,6 +215,11 @@ const indexHTML = `<!doctype html>
     <div class="agent-status">
       <span class="status-indicator" id="agent-indicator"></span>
       <span id="agent-status">проверка агента…</span>
+      <label class="collector-toggle">
+        <input id="collector-toggle" type="checkbox" onchange="setCollectorState(this.checked)">
+        <span>Сбор eBPF</span>
+      </label>
+      <span class="status" id="collector-status"></span>
     </div>
 
     <div class="alert-counter">
@@ -251,7 +269,52 @@ const indexHTML = `<!doctype html>
 			let s=document.getElementById(name+'-status');
 			s.textContent='сохраняю…';
 			let r=await fetch('/api/config/'+name,{method:'PUT',headers:{'Content-Type':'application/json'},body:document.getElementById(name).value});
-			s.textContent=r.ok?'применено':await r.text()
+			s.textContent=r.ok?'применено':await r.text();
+			if(r.ok&&name==='bpf')await updateCollectorState();
+		}
+
+		async function updateCollectorState(){
+			let toggle=document.getElementById('collector-toggle');
+			let status=document.getElementById('collector-status');
+			try {
+				let response=await fetch('/api/collector/state');
+				if(!response.ok)throw new Error(await response.text());
+				let state=await response.json();
+				toggle.checked=state.collecting;
+				toggle.disabled=false;
+				status.textContent=state.collecting?'сбор включён':'сбор остановлен';
+				status.className='status '+(state.collecting?'status-success':'');
+			}
+			catch(error){
+				toggle.disabled=true;
+				status.textContent='ошибка: '+error.message;
+				status.className='status status-error';
+			}
+		}
+
+		async function setCollectorState(collecting){
+			let toggle=document.getElementById('collector-toggle');
+			let status=document.getElementById('collector-status');
+			toggle.disabled=true;
+			status.textContent=collecting?'включаю сбор…':'останавливаю сбор…';
+			status.className='status';
+			try {
+				let response=await fetch('/api/collector/state',{
+					method:'PUT',
+					headers:{'Content-Type':'application/json'},
+					body:JSON.stringify({collecting})
+				});
+				if(!response.ok)throw new Error(await response.text());
+				await load('bpf');
+				await updateCollectorState();
+				if(!collecting)status.textContent='сбор остановлен, агент доотправляет события';
+			}
+			catch(error){
+				toggle.checked=!collecting;
+				toggle.disabled=false;
+				status.textContent='ошибка: '+error.message;
+				status.className='status status-error';
+			}
 		}
 
 		async function count(){
@@ -300,6 +363,7 @@ const indexHTML = `<!doctype html>
 
 		load('correlation');
 		load('bpf');
+		updateCollectorState();
 		count();
 		setInterval(count,2000);
     updateAgentStatus();
