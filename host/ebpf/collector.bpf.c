@@ -88,7 +88,6 @@ int trace_tcp_state(struct trace_event_raw_inet_sock_set_state *ctx)
 /*-----------------------------------------------------------------*/
 /*--------------------------- EXECUTION ---------------------------*/
 /*-----------------------------------------------------------------*/
-
 static __always_inline int save_execve_event(__s32 fd, const char *pathname, const char *const *argv, __u32 flags,
                                              __u32 syscall_type)
 {
@@ -253,7 +252,10 @@ static __always_inline int save_open_event(__s32 dfd, const char *pathname, __s3
 
     bpf_get_current_comm(pending.o_event.header.comm, sizeof(pending.o_event.header.comm));
 
-    bpf_probe_read_user_str(pending.o_event.pathname, sizeof(pending.o_event.pathname), pathname);
+    long path_len = bpf_probe_read_user_str(pending.o_event.pathname, sizeof(pending.o_event.pathname), pathname);
+    if (path_len < 0) {
+        return 0;
+    }
 
     pending.o_event.dirfd = dfd;
     pending.o_event.flags = flags;
@@ -289,6 +291,27 @@ int trace_openat(struct trace_event_raw_sys_enter *ctx)
 
     return save_open_event((__s32)ctx->args[0], (const char *)ctx->args[1], (__u32)ctx->args[2], (__u32)ctx->args[3],
                            OPENAT_SYSCALL);
+}
+
+SEC("tracepoint/syscalls/sys_enter_openat2")
+int trace_openat2(struct trace_event_raw_sys_enter *ctx)
+{
+    /*
+    dfd: 0x%08lx, filename: 0x%08lx, how: 0x%08lx, usize: 0x%08lx
+    ((unsigned long)(REC->dfd)), ((unsigned long)(REC->filename)), ((unsigned long)(REC->how)), ((unsigned
+    long)(REC->usize))
+    */
+    const struct open_how *user_how = (const struct open_how *)ctx->args[2];
+    struct open_how how = {};
+
+    if (!user_how || ctx->args[3] < sizeof(how))
+        return 0;
+
+    if (bpf_probe_read_user(&how, sizeof(how), user_how) < 0)
+        return 0;
+
+    return save_open_event((__s32)ctx->args[0], (const char *)ctx->args[1], (__u32)how.flags, (__u32)how.mode,
+                           OPENAT2_SYSCALL);
 }
 
 static __always_inline int save_open_event_exit(__s64 res, __u32 syscall_type)
@@ -338,6 +361,8 @@ static __always_inline int save_open_event_exit(__s64 res, __u32 syscall_type)
     bpf_map_delete_elem(&pending_openat_map, &tid);
 
     bpf_ringbuf_submit(e, 0);
+
+    return 0;
 }
 
 SEC("tracepoint/syscalls/sys_exit_open")
@@ -360,6 +385,17 @@ int trace_openat_exit(struct trace_event_raw_sys_exit *ctx)
     */
 
     return save_open_event_exit((__s64)ctx->ret, OPENAT_SYSCALL);
+}
+
+SEC("tracepoint/syscalls/sys_exit_openat2")
+int trace_openat2_exit(struct trace_event_raw_sys_exit *ctx)
+{
+    /*
+    0x%lx
+    REC->ret
+    */
+
+    return save_open_event_exit((__s64)ctx->ret, OPENAT2_SYSCALL);
 }
 
 /*-----------------------------------------------------------------*/
@@ -517,7 +553,6 @@ int trace_renameat2_exit(struct trace_event_raw_sys_exit *ctx)
 /*-----------------------------------------------------------------*/
 /*------------------------------ FCHMOD ----------------------------*/
 /*-----------------------------------------------------------------*/
-
 static __always_inline int save_fchmod_event(__s32 dfd, const char *pathname, __s32 mode, __s32 flags,
                                              __u32 syscall_type)
 {
@@ -989,6 +1024,182 @@ int trace_vfork_exit(struct trace_event_raw_sys_exit *ctx)
     */
 
     return save_clone_event_exit((__s64)ctx->ret, VFORK_SYSCALL);
+}
+
+/*-----------------------------------------------------------------*/
+/*------------------------------ STAT -----------------------------*/
+/*-----------------------------------------------------------------*/
+static __always_inline int save_file_probe_event(__s32 dfd, const char *pathname, __u32 mode, __u32 flags,
+                                                  __u32 mask, __u32 syscall_type, __u32 event_type)
+{
+    if (!event_enabled(CONFIG_EVENT_PROBE) || !pathname)
+        return 0;
+
+    struct file_probe_event e = {};
+
+    e.header.type = event_type;
+
+    __u64 pid_tgid = bpf_get_current_pid_tgid();
+    e.header.pid = pid_tgid >> 32;
+    e.header.tid = pid_tgid & 0xffffffff;
+
+    e.header.uid = bpf_get_current_uid_gid() & 0xffffffff;
+    e.header.timestamp_ns = bpf_ktime_get_ns();
+
+    bpf_get_current_comm(e.header.comm, sizeof(e.header.comm));
+
+    if (bpf_probe_read_user_str(e.pathname, sizeof(e.pathname), pathname) < 0)
+        return 0;
+
+    e.dirfd = dfd;
+    e.mode = mode;
+    e.flags = flags;
+    e.mask = mask;
+    e.header.syscall_type = syscall_type;
+
+    bpf_map_update_elem(&pending_file_probe_map, &e.header.tid, &e, BPF_ANY);
+
+    return 0;
+}
+
+SEC("tracepoint/syscalls/sys_enter_statx")
+int trace_enter_statx(struct trace_event_raw_sys_enter *ctx)
+{
+    /*
+    dfd: 0x%08lx, filename: 0x%08lx, flags: 0x%08lx, mask: 0x%08lx, buffer: 0x%08lx
+    ((unsigned long)(REC->dfd)), ((unsigned long)(REC->filename)),
+    ((unsigned long)(REC->flags)), ((unsigned long)(REC->mask)), ((unsigned long)(REC->buffer))
+    */
+    return save_file_probe_event((__s32)ctx->args[0], (const char *)ctx->args[1], 0, (__u32)ctx->args[2],
+                                 (__u32)ctx->args[3], STATX_SYSCALL, EVENT_STATX);
+}
+
+SEC("tracepoint/syscalls/sys_enter_access")
+int trace_enter_access(struct trace_event_raw_sys_enter *ctx)
+{
+    /*
+    filename: 0x%08lx, mode: 0x%08lx
+    ((unsigned long)(REC->filename)), ((unsigned long)(REC->mode))
+    */
+    return save_file_probe_event(AT_FDCWD, (const char *)ctx->args[0], (__u32)ctx->args[1], 0, 0,
+                                 ACCESS_SYSCALL, EVENT_ACCESS);
+}
+
+SEC("tracepoint/syscalls/sys_enter_faccessat")
+int trace_enter_faccessat(struct trace_event_raw_sys_enter *ctx)
+{
+    /*
+    dfd: 0x%08lx, filename: 0x%08lx, mode: 0x%08lx
+    ((unsigned long)(REC->dfd)), ((unsigned long)(REC->filename)), ((unsigned long)(REC->mode))
+    */
+    return save_file_probe_event((__s32)ctx->args[0], (const char *)ctx->args[1], (__u32)ctx->args[2], 0, 0,
+                                 FACCESSAT_SYSCALL, EVENT_FACCESSAT);
+}
+
+SEC("tracepoint/syscalls/sys_enter_faccessat2")
+int trace_enter_faccessat2(struct trace_event_raw_sys_enter *ctx)
+{
+    /*
+    dfd: 0x%08lx, filename: 0x%08lx, mode: 0x%08lx, flags: 0x%08lx
+    ((unsigned long)(REC->dfd)), ((unsigned long)(REC->filename)),
+    ((unsigned long)(REC->mode)), ((unsigned long)(REC->flags))
+    */
+    return save_file_probe_event((__s32)ctx->args[0], (const char *)ctx->args[1], (__u32)ctx->args[2],
+                                 (__u32)ctx->args[3], 0, FACCESSAT2_SYSCALL, EVENT_FACCESSAT2);
+}
+
+SEC("tracepoint/syscalls/sys_enter_newfstatat")
+int trace_enter_newfstatat(struct trace_event_raw_sys_enter *ctx)
+{
+    /*
+    dfd: 0x%08lx, filename: 0x%08lx, statbuf: 0x%08lx, flag: 0x%08lx
+    ((unsigned long)(REC->dfd)), ((unsigned long)(REC->filename))
+    ((unsigned long)(REC->statbuf)), ((unsigned long)(REC->flag))
+    */
+    return save_file_probe_event((__s32)ctx->args[0], (const char *)ctx->args[1], 0, (__u32)ctx->args[3], 0,
+                                 NEWFSTATAT_SYSCALL, EVENT_NEWFSTATAT);
+}
+
+static __always_inline int save_file_probe_event_exit(__s64 res)
+{
+    __u32 tid = (__u32)bpf_get_current_pid_tgid();
+    struct file_probe_event *pending = bpf_map_lookup_elem(&pending_file_probe_map, &tid);
+    if (!pending)
+        return 0;
+
+    if (successful_only(CONFIG_EVENT_PROBE) && res < 0)
+    {
+        bpf_map_delete_elem(&pending_file_probe_map, &tid);
+        return 0;
+    }
+
+    struct file_probe_event *e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
+    if (!e)
+    {
+        bpf_map_delete_elem(&pending_file_probe_map, &tid);
+        return 0;
+    }
+
+    *e = *pending;
+    e->header.res = res;
+    bpf_map_delete_elem(&pending_file_probe_map, &tid);
+    bpf_ringbuf_submit(e, 0);
+    return 0;
+}
+
+SEC("tracepoint/syscalls/sys_exit_statx")
+int trace_exit_statx(struct trace_event_raw_sys_exit *ctx)
+{
+    /*
+    0x%lx
+    REC->ret
+    */
+
+    return save_file_probe_event_exit((__s64)ctx->ret);
+}
+
+SEC("tracepoint/syscalls/sys_exit_newfstatat")
+int trace_exit_newfstatat(struct trace_event_raw_sys_exit *ctx)
+{
+    /*
+    0x%lx
+    REC->ret
+    */
+
+    return save_file_probe_event_exit((__s64)ctx->ret);
+}
+
+SEC("tracepoint/syscalls/sys_exit_access")
+int trace_exit_access(struct trace_event_raw_sys_exit *ctx)
+{
+    /*
+    0x%lx
+    REC->ret
+    */
+
+    return save_file_probe_event_exit((__s64)ctx->ret);
+}
+
+SEC("tracepoint/syscalls/sys_exit_faccessat")
+int trace_exit_faccessat(struct trace_event_raw_sys_exit *ctx)
+{
+    /*
+    0x%lx
+    REC->ret
+    */
+
+    return save_file_probe_event_exit((__s64)ctx->ret);
+}
+
+SEC("tracepoint/syscalls/sys_exit_faccessat2")
+int trace_exit_faccessat2(struct trace_event_raw_sys_exit *ctx)
+{
+    /*
+    0x%lx
+    REC->ret
+    */
+
+    return save_file_probe_event_exit((__s64)ctx->ret);
 }
 
 char LICENSE[] SEC("license") = "GPL";

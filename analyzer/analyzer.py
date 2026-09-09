@@ -18,6 +18,7 @@ from .correlation_config import (
 )
 from .graph import EventGraph
 from .visualization import visualize_graph
+from .patterns import EVENT_FILE_PROBE
 
 
 AGENT_HOST = "0.0.0.0"
@@ -164,6 +165,8 @@ def classify_operation(
         return "file", raw_operation
     if event_type in {"EVENT_RENAME", "EVENT_FCHMOD", "EVENT_UNLINK"}:
         return "file", raw_operation
+    if event_type in EVENT_FILE_PROBE:
+        return "file", raw_operation
     if event_type == "EVENT_CONNECT":
         return "network", raw_operation
 
@@ -247,7 +250,7 @@ def add_event_to_graph(event: dict[str, Any]) -> float:
             process_id, target_id, operation, timestamp_ns, **edge_attributes
         )
 
-    elif event_type in {"EVENT_EXECVE", "EVENT_OPENAT", "EVENT_FCHMOD", "EVENT_UNLINK"}:
+    elif event_type in {"EVENT_EXECVE", "EVENT_OPENAT", "EVENT_FCHMOD", "EVENT_UNLINK"} | EVENT_FILE_PROBE:
         pathname = event_data.get("pathname", "<unknown>")
         target_id = f"file:{pathname}"
         event_graph.add_file(target_id, pathname=pathname)

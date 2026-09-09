@@ -20,6 +20,7 @@ type eventConfig struct {
 	Chmod  bool `json:"chmod"`
 	Unlink bool `json:"unlink"`
 	Clone  bool `json:"clone"`
+	Stat   bool `json:"stat"`
 }
 
 type eventFilterConfig struct {
@@ -41,6 +42,7 @@ type filterConfig struct {
 	Chmod          eventFilterConfig `json:"chmod"`
 	Unlink         eventFilterConfig `json:"unlink"`
 	Clone          eventFilterConfig `json:"clone"`
+	Stat           eventFilterConfig `json:"stat"`
 }
 
 type config struct {
@@ -72,6 +74,7 @@ func parseConfig(cfg *config) error {
 		&cfg.Filters.Chmod,
 		&cfg.Filters.Unlink,
 		&cfg.Filters.Clone,
+		&cfg.Filters.Stat,
 	}
 	for _, filter := range filters {
 		truncateFilterPaths(filter)

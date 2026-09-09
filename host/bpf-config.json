@@ -1,13 +1,14 @@
 {
   "comment" : "to eBPF",
   "events": {
-    "tcp": false,
-    "open": false,
+    "tcp": true,
+    "open": true,
     "execve": true,
     "rename": true,
     "chmod": true,
     "unlink": true,
-    "clone": false
+    "clone": true,
+    "stat": true
   },
   "filters": {
     "successful_only": false,
@@ -26,12 +27,17 @@
 
       "successful_only": false,
 
-      "follow_all": true,
+      "follow_all": false,
       "follow_only_include": false,
-      "follow_only_exclude": false,
+      "follow_only_exclude": true,
 
       "include_paths": [],
-      "exclude_paths": []
+      "exclude_paths": [
+        "/usr/share/nodejs/",
+        "/usr/share/node_modules/",
+        "home/alena/ead/analyzer/",
+        "/home/alena/ead/.venv/"
+      ]
     },
     "execve": {
       "successful_only": false,
@@ -84,6 +90,19 @@
 
       "include_paths": [],
       "exclude_paths": []
+    },
+    "stat": {
+      "successful_only": false,
+
+      "follow_all": false,
+      "follow_only_include": false,
+      "follow_only_exclude": true,
+
+      "include_paths": [],
+      "exclude_paths": [
+        "/usr/share/nodejs/",
+        "/usr/share/node_modules/"
+      ]
     }
   }
 }

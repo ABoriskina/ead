@@ -16,7 +16,8 @@
             "rename" : 2,
             "change_permissions" : 5,
             "delete" : 3,
-            "execute" : 5
+            "execute" : 5,
+            "probe" : 1
         },
         "network" : {
             "max_weight" : 2,

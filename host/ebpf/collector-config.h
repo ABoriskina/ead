@@ -18,7 +18,8 @@ enum configured_event
     CONFIG_EVENT_RENAME = 1U << 3,
     CONFIG_EVENT_FCHMOD = 1U << 4,
     CONFIG_EVENT_UNLINK = 1U << 5,
-    CONFIG_EVENT_CLONE = 1U << 6
+    CONFIG_EVENT_CLONE = 1U << 6,
+    CONFIG_EVENT_PROBE = 1U << 7
 };
 
 struct bpf_collector_config

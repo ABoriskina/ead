@@ -106,6 +106,7 @@ const (
 	operationChangePermissions = "CHANGE_PERMISSIONS"
 	operationDelete            = "DELETE"
 	operationEstablish         = "ESTABLISH"
+	operationFileProbe         = "PROBE"
 )
 
 func newAnalyzerEvent(header eventsHeader, eventType, operation string) analyzerEvent {
@@ -247,6 +248,18 @@ func sendEventToAnalyzer(data interface{}, eventType eventType) error {
 		event.Event["created_task_id"] = e.CreatedTaskID
 		event.Event["tls"] = e.Tls
 		event.Event["exit_signal"] = e.ExitSignal
+
+	case eventStat, eventStatx, eventNewfstatat, eventAccess, eventFaccessat, eventFaccessat2:
+		e, ok := data.(*fileProbeEvent)
+		if !ok {
+			return fmt.Errorf("file probe event: unexpected data type %T", data)
+		}
+		event = newAnalyzerEvent(e.Header, fileProbeEventName(eventType), operationFileProbe)
+		event.Event["pathname"] = cString(e.Pathname[:])
+		event.Event["dirfd"] = e.Dirfd
+		event.Event["mode"] = e.Mode
+		event.Event["flags"] = e.Flags
+		event.Event["mask"] = e.Mask
 
 	default:
 		return fmt.Errorf("unsupported analyzer event type: %d", eventType)

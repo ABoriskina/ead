@@ -53,6 +53,13 @@ const (
 
 	eventClone
 	eventCloneExit
+
+	eventStat
+	eventStatx
+	eventNewfstatat
+	eventAccess
+	eventFaccessat
+	eventFaccessat2
 )
 
 type eventsHeader struct {
@@ -132,6 +139,15 @@ type cloningEvent struct {
 	ExitSignal    uint64
 }
 
+type fileProbeEvent struct {
+	Header   eventsHeader
+	Pathname [maxPathLen]byte
+	Dirfd    int32
+	Mode     uint32
+	Flags    uint32
+	Mask     uint32
+}
+
 const (
 	configEventTCP uint32 = 1 << iota
 	configEventOpen
@@ -140,6 +156,7 @@ const (
 	configEventFchmod
 	configEventUnlink
 	configEventClone
+	configEventStat
 )
 
 type bpfCollectorConfig struct {
@@ -152,6 +169,13 @@ type bpfCollectorConfig struct {
 }
 
 var agentConfig config
+
+type processFD struct {
+	pid uint32
+	fd  int32
+}
+
+var openedFilePaths = make(map[processFD]string)
 
 type pathOption int
 
@@ -171,7 +195,8 @@ func bytesToString(buf []byte) string {
 }
 
 func pathHasPrefix(pathname string, prefix string) bool {
-	return strings.HasPrefix(pathname, prefix)
+	return pathname == strings.TrimSuffix(prefix, string(os.PathSeparator)) ||
+		strings.HasPrefix(pathname, prefix)
 }
 
 func pathInList(pathname string, filter *eventFilterConfig, option pathOption) bool {
@@ -238,6 +263,9 @@ func prepareBPFConfig(cfg *config) bpfCollectorConfig {
 	if cfg.Events.Clone {
 		bpfConfig.EnabledEvents |= configEventClone
 	}
+	if cfg.Events.Stat {
+		bpfConfig.EnabledEvents |= configEventStat
+	}
 
 	if cfg.Filters.SuccessfulOnly || cfg.Filters.TCP.SuccessfulOnly {
 		bpfConfig.SuccessfulEvents |= configEventTCP
@@ -259,6 +287,9 @@ func prepareBPFConfig(cfg *config) bpfCollectorConfig {
 	}
 	if cfg.Filters.SuccessfulOnly || cfg.Filters.Clone.SuccessfulOnly {
 		bpfConfig.SuccessfulEvents |= configEventClone
+	}
+	if cfg.Filters.SuccessfulOnly || cfg.Filters.Stat.SuccessfulOnly {
+		bpfConfig.SuccessfulEvents |= configEventStat
 	}
 
 	if cfg.Filters.Open.WriteOnly {
@@ -316,6 +347,22 @@ func resolveEventPath(pid uint32, dirfd int32, pathname string) (string, error) 
 	}
 
 	return filepath.Join(basePath, pathname), nil
+}
+
+func resolveEventPathCached(pid uint32, dirfd int32, pathname string) (string, error) {
+	if pathname == "" && dirfd >= 0 {
+		if resolved, ok := openedFilePaths[processFD{pid: pid, fd: dirfd}]; ok {
+			return resolved, nil
+		}
+	}
+
+	if pathname != "" && !filepath.IsAbs(pathname) && dirfd >= 0 {
+		if basePath, ok := openedFilePaths[processFD{pid: pid, fd: dirfd}]; ok {
+			return filepath.Join(basePath, pathname), nil
+		}
+	}
+
+	return resolveEventPath(pid, dirfd, pathname)
 }
 
 func main() {
@@ -521,7 +568,16 @@ func handleEvent(data []byte) error {
 			return err
 		}
 
-		pathname := cString(event.Pathname[:])
+		eventPathname := cString(event.Pathname[:])
+		pathname, err := resolveEventPath(event.Header.Pid, event.Dirfd, eventPathname)
+		if err != nil {
+			pathname = eventPathname
+		}
+		if event.Header.Res >= 0 {
+			openedFilePaths[processFD{pid: event.Header.Pid, fd: int32(event.Header.Res)}] = pathname
+		}
+		clear(event.Pathname[:])
+		copy(event.Pathname[:], pathname)
 
 		if !checkPath(pathname, &currentConfig.Filters.Open) {
 			return nil
@@ -593,7 +649,7 @@ func handleEvent(data []byte) error {
 		}
 
 		eventPathname := cString(event.Pathname[:])
-		pathname, err := resolveEventPath(
+		pathname, err := resolveEventPathCached(
 			event.Header.Pid,
 			event.Dirfd,
 			eventPathname,
@@ -602,6 +658,9 @@ func handleEvent(data []byte) error {
 		if err != nil {
 			pathname = "<unresolved>"
 		}
+
+		clear(event.Pathname[:])
+		copy(event.Pathname[:], pathname)
 
 		if !checkPath(pathname, &currentConfig.Filters.Chmod) {
 			return nil
@@ -686,9 +745,47 @@ func handleEvent(data []byte) error {
 		if err := sendEventToAnalyzer(&event, eventCloneExit); err != nil {
 			log.Printf("failed to send clone event to analyzer: %v", err)
 		}
+
+	case eventStat, eventStatx, eventNewfstatat, eventAccess, eventFaccessat, eventFaccessat2:
+		var event fileProbeEvent
+		if err := binary.Read(bytes.NewReader(data), binary.LittleEndian, &event); err != nil {
+			return err
+		}
+
+		eventPathname := cString(event.Pathname[:])
+		pathname, err := resolveEventPathCached(
+			event.Header.Pid,
+			event.Dirfd,
+			eventPathname,
+		)
+
+		if err != nil {
+			pathname = "<unresolved>"
+		}
+
+		clear(event.Pathname[:])
+		copy(event.Pathname[:], pathname)
+
+		if !checkPath(pathname, &currentConfig.Filters.Stat) {
+			return nil
+		}
+
+		fmt.Printf("[%s] pid=%d uid=%d comm=%s file=%s dirfd=%d mode=%d flags=%d mask=%d res=%d\n",
+			fileProbeEventName(eventType), event.Header.Pid, event.Header.Uid, cString(event.Header.Comm[:]),
+			pathname, event.Dirfd, event.Mode, event.Flags, event.Mask, event.Header.Res)
+		if err := sendEventToAnalyzer(&event, eventType); err != nil {
+			log.Printf("failed to send file probe event to analyzer: %v", err)
+		}
 	}
 
 	return nil
+}
+
+func fileProbeEventName(kind eventType) string {
+	return map[eventType]string{
+		eventStat: "EVENT_STAT", eventStatx: "EVENT_STATX", eventNewfstatat: "EVENT_NEWFSTATAT",
+		eventAccess: "EVENT_ACCESS", eventFaccessat: "EVENT_FACCESSAT", eventFaccessat2: "EVENT_FACCESSAT2",
+	}[kind]
 }
 
 func attachPrograms(

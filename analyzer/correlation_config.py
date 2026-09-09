@@ -27,6 +27,7 @@ SUPPORTED_OPERATIONS = {
         "change_permissions",
         "delete",
         "execute",
+        "probe"
     },
     "network": {
         "connect",

@@ -43,6 +43,13 @@ enum event_type
 
     EVENT_CLONE,
     EVENT_CLONE_EXIT,
+
+    EVENT_STAT,
+    EVENT_STATX,
+    EVENT_NEWFSTATAT,
+    EVENT_ACCESS,
+    EVENT_FACCESSAT,
+    EVENT_FACCESSAT2,
 };
 
 enum syscall_types
@@ -52,6 +59,7 @@ enum syscall_types
 
     OPEN_SYSCALL,
     OPENAT_SYSCALL,
+    OPENAT2_SYSCALL,
 
     RENAME_SYSCALL,
     RENAMEAT_SYSCALL,
@@ -69,7 +77,14 @@ enum syscall_types
     CLONE_SYSCALL,
     CLONE3_SYSCALL,
     FORK_SYSCALL,
-    VFORK_SYSCALL
+    VFORK_SYSCALL,
+
+    STAT_SYSCALL,
+    STATX_SYSCALL,
+    NEWFSTATAT_SYSCALL,
+    ACCESS_SYSCALL,
+    FACCESSAT_SYSCALL,
+    FACCESSAT2_SYSCALL
 };
 
 struct events_header
@@ -152,10 +167,20 @@ struct cloning_event
     __u64 exit_signal;
 };
 
+struct file_probe_event
+{
+    struct events_header header;
+    char pathname[MAX_PATH_LEN];
+    __s32 dirfd;
+    __u32 mode;
+    __u32 flags;
+    __u32 mask;
+};
+
 struct
 {
     __uint(type, BPF_MAP_TYPE_RINGBUF);
-    __uint(max_entries, 256 * 1024);
+    __uint(max_entries, 8 * 1024 * 1024);
 } events SEC(".maps");
 
 /*struct
@@ -221,6 +246,14 @@ struct
     __type(key, __u32);
     __type(value, struct cloning_event);
 } pending_clone_map SEC(".maps");
+
+struct
+{
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 16384);
+    __type(key, __u32);
+    __type(value, struct file_probe_event);
+} pending_file_probe_map SEC(".maps");
 
 struct
 {
