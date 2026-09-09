@@ -1,109 +1,171 @@
 {
-  "comment" : "to eBPF",
-  "events": {
-    "tcp": true,
-    "open": true,
-    "execve": true,
-    "rename": true,
-    "chmod": true,
-    "unlink": true,
-    "clone": true,
-    "stat": true,
-    "lsm_file_open": true
-  },
-  "filters": {
-    "successful_only": false,
-    "tcp": {
-      "successful_only": false,
-
-      "follow_all": true,
-      "follow_only_include": false,
-      "follow_only_exclude": false,
-
-      "include_paths": [],
-      "exclude_paths": []
+    "comment": "to eBPF",
+    "events": {
+        "chmod": false,
+        "clone": false,
+        "execve": false,
+        "lsm_file_open": false,
+        "open": false,
+        "rename": false,
+        "stat": false,
+        "tcp": false,
+        "unlink": false
     },
-    "open": {
-      "write_only": false,
-
-      "successful_only": false,
-
-      "follow_all": false,
-      "follow_only_include": false,
-      "follow_only_exclude": true,
-
-      "include_paths": [],
-      "exclude_paths": [
-        "/usr/share/nodejs/",
-        "/usr/share/node_modules/",
-        "home/alena/ead/analyzer/",
-        "/home/alena/ead/.venv/"
-      ]
-    },
-    "execve": {
-      "successful_only": false,
-
-      "follow_all": true,
-      "follow_only_include": false,
-      "follow_only_exclude": false,
-
-      "include_paths": [],
-      "exclude_paths": []
-    },
-    "rename": {
-      "successful_only": false,
-
-      "follow_all": false,
-      "follow_only_include": false,
-      "follow_only_exclude": true,
-
-      "include_paths": [],
-      "comment": "home folder will be added in web interface",
-      "exclude_paths": ["/home/alena/snap/firefox/common/.cache", "/dev/shm/.org.chromium.Chromium", "/home/alena/snap/firefox/common/.mozilla/firefox/"]
-    },
-    "chmod": {
-      "successful_only": false,
-
-      "follow_all": true,
-      "follow_only_include": false,
-      "follow_only_exclude": false,
-
-      "include_paths": [],
-      "exclude_paths": []
-    },
-    "unlink": {
-      "successful_only": false,
-
-      "follow_all": false,
-      "follow_only_include": false,
-      "follow_only_exclude": true,
-
-      "include_paths": [],
-      "comment": "home folder will be added in web interface",
-      "exclude_paths": ["/home/alena/snap/firefox/common/.cache", "/dev/shm/.org.chromium.Chromium", "/home/alena/snap/firefox/common/.mozilla/firefox/"]
-    },
-    "clone": {
-      "successful_only": false,
-
-      "follow_all": true,
-      "follow_only_include": false,
-      "follow_only_exclude": false,
-
-      "include_paths": [],
-      "exclude_paths": []
-    },
-    "stat": {
-      "successful_only": false,
-
-      "follow_all": false,
-      "follow_only_include": false,
-      "follow_only_exclude": true,
-
-      "include_paths": [],
-      "exclude_paths": [
-        "/usr/share/nodejs/",
-        "/usr/share/node_modules/"
-      ]
+    "filters": {
+        "chmod": {
+            "exclude_paths": [
+                "/lib/x86_64-linux-gnu/",
+                "/usr/lib/x86_64-linux-gnu/",
+                "/usr/share/zoneinfo/",
+                "/usr/share/zoneinfo-icu/",
+                "/proc/",
+                "/sys/",
+                "/dev/null",
+                "/dev/pts/",
+                "/run/systemd/resolve/",
+                "/home/alena/ead/analyzer/",
+                "/home/alena/ead/host/build/",
+                "/home/alena/ead/.venv/",
+                "/home/alena/snap/firefox/common/.cache"
+            ],
+            "follow_all": false,
+            "follow_only_exclude": true,
+            "follow_only_include": false,
+            "include_paths": [],
+            "successful_only": false
+        },
+        "clone": {
+            "exclude_paths": [
+                "/lib/x86_64-linux-gnu/",
+                "/usr/lib/x86_64-linux-gnu/",
+                "/usr/share/zoneinfo/",
+                "/usr/share/zoneinfo-icu/",
+                "/proc/",
+                "/sys/",
+                "/dev/null",
+                "/dev/pts/",
+                "/run/systemd/resolve/",
+                "/home/alena/ead/analyzer/",
+                "/home/alena/ead/host/build/",
+                "/home/alena/ead/.venv/",
+                "/home/alena/snap/firefox/common/.cache"
+            ],
+            "follow_all": false,
+            "follow_only_exclude": true,
+            "follow_only_include": false,
+            "include_paths": [],
+            "successful_only": false
+        },
+        "execve": {
+            "exclude_paths": [
+                "/lib/x86_64-linux-gnu/",
+                "/usr/lib/x86_64-linux-gnu/",
+                "/usr/share/zoneinfo/",
+                "/usr/share/zoneinfo-icu/",
+                "/proc/",
+                "/sys/",
+                "/dev/null",
+                "/dev/pts/",
+                "/run/systemd/resolve/",
+                "/home/alena/ead/analyzer/",
+                "/home/alena/ead/host/build/",
+                "/home/alena/ead/.venv/",
+                "/home/alena/snap/firefox/common/.cache"
+            ],
+            "follow_all": false,
+            "follow_only_exclude": true,
+            "follow_only_include": false,
+            "include_paths": [],
+            "successful_only": false
+        },
+        "open": {
+            "exclude_paths": [
+                "/usr/share/nodejs/",
+                "/usr/share/node_modules/",
+                "home/alena/ead/analyzer/",
+                "/home/alena/ead/.venv/"
+            ],
+            "follow_all": false,
+            "follow_only_exclude": true,
+            "follow_only_include": false,
+            "include_paths": [],
+            "successful_only": false,
+            "write_only": false
+        },
+        "rename": {
+            "exclude_paths": [
+                "/lib/x86_64-linux-gnu/",
+                "/usr/lib/x86_64-linux-gnu/",
+                "/usr/share/zoneinfo/",
+                "/usr/share/zoneinfo-icu/",
+                "/proc/",
+                "/sys/",
+                "/dev/null",
+                "/dev/pts/",
+                "/run/systemd/resolve/",
+                "/home/alena/ead/analyzer/",
+                "/home/alena/ead/host/build/",
+                "/home/alena/ead/.venv/",
+                "/home/alena/snap/firefox/common/.cache"
+            ],
+            "follow_all": false,
+            "follow_only_exclude": true,
+            "follow_only_include": false,
+            "include_paths": [],
+            "successful_only": false
+        },
+        "stat": {
+            "exclude_paths": [
+                "/lib/x86_64-linux-gnu/",
+                "/usr/lib/x86_64-linux-gnu/",
+                "/usr/share/zoneinfo/",
+                "/usr/share/zoneinfo-icu/",
+                "/proc/",
+                "/sys/",
+                "/dev/null",
+                "/dev/pts/",
+                "/run/systemd/resolve/",
+                "/home/alena/ead/analyzer/",
+                "/home/alena/ead/host/build/",
+                "/home/alena/ead/.venv/",
+                "/home/alena/snap/firefox/common/.cache"
+            ],
+            "follow_all": false,
+            "follow_only_exclude": true,
+            "follow_only_include": false,
+            "include_paths": [],
+            "successful_only": false
+        },
+        "successful_only": false,
+        "tcp": {
+            "exclude_paths": [],
+            "follow_all": false,
+            "follow_only_exclude": true,
+            "follow_only_include": false,
+            "include_paths": [],
+            "successful_only": false
+        },
+        "unlink": {
+            "exclude_paths": [
+                "/lib/x86_64-linux-gnu/",
+                "/usr/lib/x86_64-linux-gnu/",
+                "/usr/share/zoneinfo/",
+                "/usr/share/zoneinfo-icu/",
+                "/proc/",
+                "/sys/",
+                "/dev/null",
+                "/dev/pts/",
+                "/run/systemd/resolve/",
+                "/home/alena/ead/analyzer/",
+                "/home/alena/ead/host/build/",
+                "/home/alena/ead/.venv/",
+                "/home/alena/snap/firefox/common/.cache"
+            ],
+            "follow_all": false,
+            "follow_only_exclude": true,
+            "follow_only_include": false,
+            "include_paths": [],
+            "successful_only": false
+        }
     }
-  }
 }
