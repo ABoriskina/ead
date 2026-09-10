@@ -26,7 +26,9 @@
                 "/home/alena/ead/analyzer/",
                 "/home/alena/ead/host/build/",
                 "/home/alena/ead/.venv/",
-                "/home/alena/snap/firefox/common/.cache"
+                "/home/alena/snap/firefox/common/.cache",
+                "/usr/share/nodejs/",
+                "/etc/ld.so.cache"
             ],
             "follow_all": false,
             "follow_only_exclude": true,
@@ -48,7 +50,9 @@
                 "/home/alena/ead/analyzer/",
                 "/home/alena/ead/host/build/",
                 "/home/alena/ead/.venv/",
-                "/home/alena/snap/firefox/common/.cache"
+                "/home/alena/snap/firefox/common/.cache",
+                "/usr/share/nodejs/",
+                "/etc/ld.so.cache"
             ],
             "follow_all": false,
             "follow_only_exclude": true,
@@ -70,7 +74,9 @@
                 "/home/alena/ead/analyzer/",
                 "/home/alena/ead/host/build/",
                 "/home/alena/ead/.venv/",
-                "/home/alena/snap/firefox/common/.cache"
+                "/home/alena/snap/firefox/common/.cache",
+                "/usr/share/nodejs/",
+                "/etc/ld.so.cache"
             ],
             "follow_all": false,
             "follow_only_exclude": true,
@@ -80,10 +86,21 @@
         },
         "open": {
             "exclude_paths": [
+                "/lib/x86_64-linux-gnu/",
+                "/usr/lib/x86_64-linux-gnu/",
+                "/usr/share/zoneinfo/",
+                "/usr/share/zoneinfo-icu/",
+                "/proc/",
+                "/sys/",
+                "/dev/null",
+                "/dev/pts/",
+                "/run/systemd/resolve/",
+                "/home/alena/ead/analyzer/",
+                "/home/alena/ead/host/build/",
+                "/home/alena/ead/.venv/",
+                "/home/alena/snap/firefox/common/.cache",
                 "/usr/share/nodejs/",
-                "/usr/share/node_modules/",
-                "home/alena/ead/analyzer/",
-                "/home/alena/ead/.venv/"
+                "/etc/ld.so.cache"
             ],
             "follow_all": false,
             "follow_only_exclude": true,
@@ -106,7 +123,9 @@
                 "/home/alena/ead/analyzer/",
                 "/home/alena/ead/host/build/",
                 "/home/alena/ead/.venv/",
-                "/home/alena/snap/firefox/common/.cache"
+                "/home/alena/snap/firefox/common/.cache",
+                "/usr/share/nodejs/",
+                "/etc/ld.so.cache"
             ],
             "follow_all": false,
             "follow_only_exclude": true,
@@ -128,7 +147,9 @@
                 "/home/alena/ead/analyzer/",
                 "/home/alena/ead/host/build/",
                 "/home/alena/ead/.venv/",
-                "/home/alena/snap/firefox/common/.cache"
+                "/home/alena/snap/firefox/common/.cache",
+                "/usr/share/nodejs/",
+                "/etc/ld.so.cache"
             ],
             "follow_all": false,
             "follow_only_exclude": true,
@@ -159,7 +180,9 @@
                 "/home/alena/ead/analyzer/",
                 "/home/alena/ead/host/build/",
                 "/home/alena/ead/.venv/",
-                "/home/alena/snap/firefox/common/.cache"
+                "/home/alena/snap/firefox/common/.cache",
+                "/usr/share/nodejs/",
+                "/etc/ld.so.cache"
             ],
             "follow_all": false,
             "follow_only_exclude": true,

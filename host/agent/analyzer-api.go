@@ -7,6 +7,7 @@ import (
 	"net"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -21,9 +22,9 @@ var (
 	analyzerConn   net.Conn
 	analyzerConnMu sync.Mutex
 
-	analyzerEventsSent              uint64
-	analyzerEventsWithoutConnection uint64
-	analyzerSendErrors              uint64
+	analyzerEventsSent              atomic.Uint64
+	analyzerEventsWithoutConnection atomic.Uint64
+	analyzerSendErrors              atomic.Uint64
 )
 
 type analyzerProcess struct {
@@ -301,19 +302,19 @@ func sendAnalyzerEvent(event analyzerEvent) error {
 	analyzerConnMu.Lock()
 	defer analyzerConnMu.Unlock()
 	if analyzerConn == nil {
-		analyzerEventsWithoutConnection++
+		analyzerEventsWithoutConnection.Add(1)
 		return nil
 	}
 
 	if _, err := analyzerConn.Write(data); err != nil {
-		analyzerSendErrors++
+		analyzerSendErrors.Add(1)
 		analyzerConn.Close()
 		analyzerConn = nil
 
 		return fmt.Errorf("send analyzer event: %w", err)
 	}
 
-	analyzerEventsSent++
+	analyzerEventsSent.Add(1)
 
 	return nil
 }

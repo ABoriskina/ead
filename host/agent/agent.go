@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -187,13 +188,13 @@ type processFD struct {
 
 var openedFilePaths = make(map[processFD]string)
 
-var receivedEvents uint64
-var eventHandlingErrors uint64
-var receivedEventsByType [eventFileOpen + 1]uint64
-var filteredEventsByType [eventFileOpen + 1]uint64
-var receivedEventsWithUnknownType uint64
-var failedOpenatEvents uint64
-var duplicateOpenEvents uint64
+var receivedEvents atomic.Uint64
+var eventHandlingErrors atomic.Uint64
+var receivedEventsByType [eventFileOpen + 1]atomic.Uint64
+var filteredEventsByType [eventFileOpen + 1]atomic.Uint64
+var receivedEventsWithUnknownType atomic.Uint64
+var failedOpenatEvents atomic.Uint64
+var duplicateOpenEvents atomic.Uint64
 
 const duplicateOpenWindowNs = uint64(100 * time.Millisecond)
 
@@ -461,6 +462,8 @@ func main() {
 	startAnalyzerReconnect()
 	defer closeAnalyzerConnection()
 	defer printAgentSummary()
+	metricsRecorder := startMetricsRecorder()
+	defer metricsRecorder.stopAndWriteFinal()
 
 	for {
 		record, err := reader.Read()
@@ -473,73 +476,77 @@ func main() {
 			continue
 		}
 
-		receivedEvents++
+		receivedEvents.Add(1)
 		if len(record.RawSample) >= 4 {
 			kind := eventType(binary.LittleEndian.Uint32(record.RawSample[:4]))
 			if kind <= eventFileOpen {
-				receivedEventsByType[kind]++
+				receivedEventsByType[kind].Add(1)
 			} else {
-				receivedEventsWithUnknownType++
+				receivedEventsWithUnknownType.Add(1)
 			}
 		} else {
-			receivedEventsWithUnknownType++
+			receivedEventsWithUnknownType.Add(1)
 		}
 
 		if err := handleEvent(record.RawSample); err != nil {
-			eventHandlingErrors++
+			eventHandlingErrors.Add(1)
 			log.Printf("failed to handle event: %v", err)
 		}
 	}
 }
 
 func printAgentSummary() {
-	notForwarded := receivedEvents - analyzerEventsSent
+	received := receivedEvents.Load()
+	sent := analyzerEventsSent.Load()
+	notForwarded := received - sent
 	var filteredByPath uint64
 	for _, count := range filteredEventsByType {
-		filteredByPath += count
+		filteredByPath += count.Load()
 	}
 
 	fmt.Printf(
 		"\n[AGENT_SUMMARY] received_from_bpf=%d sent_to_analyzer=%d not_forwarded=%d filtered_by_path=%d failed_openat=%d duplicate_openat_lsm=%d no_analyzer_connection=%d handling_errors=%d send_errors=%d\n",
-		receivedEvents,
-		analyzerEventsSent,
+		received,
+		sent,
 		notForwarded,
 		filteredByPath,
-		failedOpenatEvents,
-		duplicateOpenEvents,
-		analyzerEventsWithoutConnection,
-		eventHandlingErrors,
-		analyzerSendErrors,
+		failedOpenatEvents.Load(),
+		duplicateOpenEvents.Load(),
+		analyzerEventsWithoutConnection.Load(),
+		eventHandlingErrors.Load(),
+		analyzerSendErrors.Load(),
 	)
 
 	for kind, count := range receivedEventsByType {
-		if count == 0 {
+		value := count.Load()
+		if value == 0 {
 			continue
 		}
 
 		fmt.Printf(
 			"[AGENT_EVENT_COUNT] type=%s count=%d\n",
 			eventTypeName(eventType(kind)),
-			count,
+			value,
 		)
 	}
 
-	if receivedEventsWithUnknownType > 0 {
+	if unknown := receivedEventsWithUnknownType.Load(); unknown > 0 {
 		fmt.Printf(
 			"[AGENT_EVENT_COUNT] type=UNKNOWN count=%d\n",
-			receivedEventsWithUnknownType,
+			unknown,
 		)
 	}
 
 	for kind, count := range filteredEventsByType {
-		if count == 0 {
+		value := count.Load()
+		if value == 0 {
 			continue
 		}
 
 		fmt.Printf(
 			"[AGENT_FILTERED_COUNT] type=%s count=%d\n",
 			eventTypeName(eventType(kind)),
-			count,
+			value,
 		)
 	}
 
@@ -548,7 +555,7 @@ func printAgentSummary() {
 
 func recordFilteredEvent(kind eventType) {
 	if kind <= eventFileOpen {
-		filteredEventsByType[kind]++
+		filteredEventsByType[kind].Add(1)
 	}
 }
 
@@ -576,7 +583,7 @@ func recordOpenForDuplicateCounter(
 			delta = otherTimestamp - timestampNs
 		}
 		if delta <= duplicateOpenWindowNs {
-			duplicateOpenEvents++
+			duplicateOpenEvents.Add(1)
 			delete(opposite, key)
 			return
 		}
@@ -756,7 +763,7 @@ func handleEvent(data []byte) error {
 			pathname = eventPathname
 		}
 		if event.Header.Res < 0 {
-			failedOpenatEvents++
+			failedOpenatEvents.Add(1)
 		} else {
 			recordOpenForDuplicateCounter(
 				false,
