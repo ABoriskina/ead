@@ -27,6 +27,8 @@ AGENT_PORT = 9000
 METRICS_HOST = "0.0.0.0"
 METRICS_PORT = 9200
 
+FLUSH_GRAPH = object()
+
 
 event_queue = queue.Queue(maxsize=10_000)
 alert_queue = queue.Queue(maxsize=1_000)
@@ -303,6 +305,24 @@ def add_event_to_graph(event: dict[str, Any]) -> float:
     return normalized_base_weight
 
 
+def render_graph():
+    started = time.monotonic()
+
+    visualize_graph(
+        event_graph.graph,
+        str(graph_output_path),
+    )
+
+    duration = time.monotonic() - started
+    print(
+        f"Graph rendered: "
+        f"{event_graph.graph.number_of_nodes()} nodes, "
+        f"{event_graph.graph.number_of_edges()} edges, "
+        f"duration={duration:.3f}s; "
+        f"file://{graph_output_path}"
+    )
+
+
 def handle_event(event: dict[str, Any]) -> float:
     """
     {
@@ -324,11 +344,8 @@ def handle_event(event: dict[str, Any]) -> float:
     timestamp_ns = int(event_data.get("timestamp_ns", 0))
 
     normalized_base_weight = add_event_to_graph(event)
-    visualize_graph(event_graph.graph, str(graph_output_path)) # TODO: move somewhere else
-    print(
-        f"Graph updated: {event_graph.graph.number_of_nodes()} nodes, "
-        f"{event_graph.graph.number_of_edges()} edges; file://{graph_output_path}"
-    )
+
+    """
     if is_anchor_event(event):
         context_weight, pattern_similarity = get_context_weight(event, event_graph.graph, correlation_config)
         print(f"Context weight: {context_weight:.6f}, pattern: {pattern_similarity}, timestamp: {timestamp_ns}")
@@ -341,17 +358,30 @@ def handle_event(event: dict[str, Any]) -> float:
             publish_alert(event, adjusted_weight)
 
         return adjusted_weight
+    """
 
 
 def correlation_worker():
+    dirty = False
+
     while True:
-        event = event_queue.get()
+        item = event_queue.get()
 
         try:
-            if event is None:
+            if item is None:
+                if dirty:
+                    render_graph()
                 return
 
-            handle_event(event)
+            if item is FLUSH_GRAPH:
+                if dirty:
+                    render_graph()
+                    dirty = False
+                continue
+
+            handle_event(item)
+            dirty = True
+
         except Exception as error:
             print(f"Correlation error: {error}")
         finally:
@@ -361,21 +391,20 @@ def correlation_worker():
 def handle_agent(conn: socket.socket, addr: tuple[str, int]):
     print(f"Agent connected: {addr}")
     agents_connected.inc()
+
     try:
         with conn:
             file = conn.makefile("r", encoding="utf-8")
+
             for line in file:
                 line = line.strip()
                 if not line:
                     continue
 
-                print(f"Received raw: {line}")
-
                 try:
                     event = json.loads(line)
                 except json.JSONDecodeError as error:
                     print(f"Invalid JSON: {error}")
-                    print(f"Raw data: {line}")
                     continue
 
                 try:
@@ -383,7 +412,9 @@ def handle_agent(conn: socket.socket, addr: tuple[str, int]):
                 except queue.Full:
                     print("Event queue is full, event dropped")
     finally:
+        event_queue.put(FLUSH_GRAPH)
         agents_connected.dec()
+
     print(f"Agent disconnected: {addr}")
 
 

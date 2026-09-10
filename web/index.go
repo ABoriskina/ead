@@ -209,7 +209,7 @@ const indexHTML = `<!doctype html>
     <header class="brand">
       <img class="brand-icon" src="/static/logo.png" alt="EAD">
       <h1>Консоль eBPF anomaly detector</h1>
-      <a class="graph-link" href="/event-graph" target="_blank" rel="noopener">Открыть граф событий</a>
+      <a class="graph-link" href="../analyzer/event-graph.html" target="_blank" rel="noopener">Открыть граф событий</a>
     </header>
 
     <div class="agent-status">
