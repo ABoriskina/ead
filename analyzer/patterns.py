@@ -1,22 +1,54 @@
-"""
-    _ctx_этап_связь_поле - значение из контекста найденной связи
-    _param_этап_связь_поле - значение из параметров события
-    _sys_роль - конкретный процесс не важен, важна роль
-"""
-
 from pathlib import PurePath
 from typing import Any, Mapping
 
 
+# якорные события
 ENTITY_GROUPS = {
     "process" : {
         "package_manager" : ["npm", "npx", "yarn", "pnpm", "bun", "bpm"],
         "lifecycle_shell": ["sh", "dash", "bash"],
         "script_runtime": ["node", "bun", "deno", "bode"],
-        "bun_runtime": ["bun"]
+        "shell": ["sh", "dash", "bash", "zsh"],
+        "git_client": ["git"],
+        "secret_scanner": ["trufflehog", "gitleaks"],
+        "scheduler": ["cron", "crond", "anacron"],
+        "bun_runtime": ["bun"],
     },
     "file" : {
         "package_manifest": ["package.json", "backage.json"],
+        "npm_config": {
+            "basename": [".npmrc"],
+        },
+        "aws_credentials": {
+            "basename": ["credentials"],
+            "path_component": [".aws"],
+        },
+        "git_credentials": {
+            "basename": [".git-credentials"],
+        },
+        "ssh_private_key_candidate": {
+            "basename": ["id_rsa", "id_ed25519", "id_ecdsa", "id_dsa"],
+            "path_component": [".ssh"],
+        },
+        "git_hook_candidate": {
+            "path_component": [".git", "hooks"],
+        },
+        "pypi_config": {
+            "basename": [".pypirc"],
+        },
+        "docker_config": {
+            "basename": ["config.json"],
+            "path_component": [".docker"],
+        },
+        "environment_file_candidate": {
+            "basename": [
+                ".env",
+                ".env.local",
+                ".env.production",
+                ".env.development",
+                ".env.test",
+            ],
+        },
         "install_script": ["setup_bun.js", "payload.bjs"],
         "bun_install_dir": ["bun-dist"],
         "runtime_archive": ["bun.zip", "bun.tar.gz"],
@@ -26,6 +58,16 @@ ENTITY_GROUPS = {
 
 }
 
+SENSITIVE_FILE_GROUPS = frozenset({
+    "aws_credentials",
+    "git_credentials",
+    "ssh_private_key_candidate",
+    "npm_config",
+    "pypi_config",
+    "docker_config",
+    "environment_file_candidate",
+})
+
 EVENT_FILE_PROBE = {
     "EVENT_STAT",
     "EVENT_STATX",
@@ -34,6 +76,149 @@ EVENT_FILE_PROBE = {
     "EVENT_FACCESSAT",
     "EVENT_FACCESSAT2",
 }
+
+EVENT_GROUPS = {
+    "FILE_PROBE": EVENT_FILE_PROBE,
+    "FILE_OPEN_ATTEMPT": {"EVENT_OPENAT"},
+    "FILE_ACCESS_ATTEMPT": EVENT_FILE_PROBE | {"EVENT_OPENAT"},
+    "PROCESS_EXECUTION": {"EVENT_EXECVE"},
+    "PROCESS_CREATION": {"EVENT_CLONE"},
+}
+
+
+ANCHOR_RULES = (
+    {
+        "reason": "sensitive_file_access",
+        "event_group": "FILE_ACCESS_ATTEMPT",
+        "entity_role": "file_target",
+        "entity_groups": SENSITIVE_FILE_GROUPS,
+        "require_success": False,
+    },
+    {
+        "reason": "package_manager_execution",
+        "event_group": "PROCESS_EXECUTION",
+        "entity_role": "executed_process",
+        "entity_groups": frozenset({"package_manager"}),
+        "require_success": True,
+    },
+    {
+        "reason": "secret_scanner_execution",
+        "event_group": "PROCESS_EXECUTION",
+        "entity_role": "executed_process",
+        "entity_groups": frozenset({"secret_scanner"}),
+        "require_success": True,
+    },
+)
+
+
+# проверяем, есть ли такая группа для конкретных attributes события
+def _matches_group(group_name: str, attributes: Mapping[str, Any]) -> bool:
+    entity_type = str(attributes.get("entity_type", "unknown"))
+    groups = ENTITY_GROUPS.get(entity_type, {})
+    rule = groups.get(group_name)
+    if rule is None:
+        return False
+
+    if entity_type == "process":
+        return attributes.get("comm") in rule
+
+    if entity_type == "file":
+        pathname = str(attributes.get("pathname", ""))
+        basename = PurePath(pathname).name
+        components = PurePath(pathname).parts
+
+        if isinstance(rule, list):
+            return basename in rule or any(value in components for value in rule)
+
+        expected_basenames = rule.get("basename", [])
+        expected_components = rule.get("path_component", [])
+        return (
+            (not expected_basenames or basename in expected_basenames)
+            and (
+                not expected_components
+                or all(value in components for value in expected_components)
+            )
+        )
+
+    return False
+
+
+# все совпавшие группы. совпадения на основе entity_type+comm/pathname
+def entity_groups(
+    attributes: Mapping[str, Any],
+) -> set[str]:
+    entity_type = attributes.get("entity_type", "unknown")
+
+    return {
+        group_name
+        for group_name in ENTITY_GROUPS.get(entity_type, {})
+        if _matches_group(group_name, attributes)
+    }
+
+
+# только чувствительные категории
+def sensitive_file_groups(
+    attributes: Mapping[str, Any],
+) -> set[str]:
+    return entity_groups(attributes) & SENSITIVE_FILE_GROUPS
+
+
+def anchor_reasons(event: Mapping[str, Any]) -> set[str]:
+    event_type = event.get("event_type", "")
+    event_data = event.get("event", {})
+    pathname = str(event_data.get("pathname") or "")
+    categories_by_role: dict[str, set[str]] = {}
+
+    if (
+        pathname
+        and event_type in EVENT_GROUPS["FILE_ACCESS_ATTEMPT"]
+    ):
+        categories_by_role["file_target"] = entity_groups({
+            "entity_type": "file",
+            "pathname": pathname,
+        })
+
+    elif (
+        pathname
+        and event_type in EVENT_GROUPS["PROCESS_EXECUTION"]
+    ):
+        categories_by_role["executed_process"] = entity_groups({
+            "entity_type": "process",
+            "comm": PurePath(pathname).name,
+        })
+
+    reasons: set[str] = set()
+
+    for rule in ANCHOR_RULES:
+        if event_type not in EVENT_GROUPS[rule["event_group"]]:
+            continue
+        if (
+            rule["require_success"]
+            and event_data.get("success") is not True
+        ):
+            print("we got anchor but it is not successfull " + pathname)
+            continue
+
+        observed_groups = categories_by_role.get(
+            rule["entity_role"], set()
+        )
+        matched_groups = observed_groups & rule["entity_groups"]
+
+        for group_name in matched_groups:
+            reasons.add(f"{rule['reason']}:{group_name}")
+
+    return reasons
+
+
+
+
+
+
+
+
+
+
+# Для сопоставления с шаблоном
 
 shai_hulud_20 = {
     # установка вредоносного пакета
@@ -79,42 +264,7 @@ shai_hulud_20 = {
 }
 
 
-def _matches_group(group_name: str, attributes: Mapping[str, Any]) -> bool:
-    entity_type = str(attributes.get("entity_type", "unknown"))
-    groups = ENTITY_GROUPS.get(entity_type, {})
-    rule = groups.get(group_name)
-    if rule is None:
-        return False
-
-    if entity_type == "process":
-        return attributes.get("comm") in rule
-
-    if entity_type == "file":
-        pathname = str(attributes.get("pathname", ""))
-        basename = PurePath(pathname).name
-        components = PurePath(pathname).parts
-
-        if isinstance(rule, list):
-            return basename in rule or any(value in components for value in rule)
-
-        expected_basenames = rule.get("basename", [])
-        expected_components = rule.get("path_component", [])
-        return (
-            (not expected_basenames or basename in expected_basenames)
-            and (
-                not expected_components
-                or all(value in components for value in expected_components)
-            )
-        )
-
-    return False
-
-
 def _matches_entity(expected: str, attributes: Mapping[str, Any]) -> bool:
-    if expected.startswith(("_ctx_", "_param_", "_sys_")):
-        return True
-    if expected == "shell_child":
-        return attributes.get("entity_type") == "process"
     if _matches_group(expected, attributes):
         return True
 

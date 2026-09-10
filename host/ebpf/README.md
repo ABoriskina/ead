@@ -23,5 +23,6 @@ SEC("tracepoint/syscalls/sys_enter_openat")
 SEC("tracepoint/syscalls/sys_enter_chmod")
 SEC("tracepoint/syscalls/sys_enter_renameat")
 SEC("tracepoint/syscalls/sys_enter_unlinkat")
+SEC("lsm/file_open")
 ```
 <br></br>

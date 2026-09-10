@@ -961,7 +961,7 @@ int trace_enter_clone3(struct trace_event_raw_sys_enter *ctx)
     if (!user_args)
         return 0;
 
-    struct cloning_event args = {};
+    struct clone_args args = {};
     __u32 read_size = sizeof(args);
 
     if (args_size < read_size)
@@ -970,7 +970,8 @@ int trace_enter_clone3(struct trace_event_raw_sys_enter *ctx)
     if (read_size == 0)
         return 0;
 
-    bpf_probe_read_user(&args, read_size, user_args);
+    if (bpf_probe_read_user(&args, read_size, user_args) != 0)
+        return 0;
 
     return save_clone_event(args.flags, args.stack, args.stack_size, args.parent_tid, args.child_tid, args.tls,
                             args.exit_signal, CLONE3_SYSCALL);

@@ -16,9 +16,11 @@ from .correlation_config import (
     load_correlation_config,
     prepare_correlation_config,
 )
-from .graph import EventGraph
-from .visualization import visualize_graph
-from .patterns import EVENT_FILE_PROBE
+from .graph import render_graph
+from .buffer import EventBuffer
+from .constants import WINDOW_SIZE
+from .patterns import anchor_reasons
+from .candidates import find_related_candidates
 
 
 AGENT_HOST = "0.0.0.0"
@@ -32,13 +34,15 @@ FLUSH_GRAPH = object()
 
 event_queue = queue.Queue(maxsize=10_000)
 alert_queue = queue.Queue(maxsize=1_000)
-event_graph = EventGraph()
+event_buffer = EventBuffer(window_seconds=WINDOW_SIZE)
+
+active_candidates = {}
+process_candidates = {}
 
 correlation_config_path = prepare_correlation_config()
 correlation_config = load_correlation_config(correlation_config_path)
 correlation_config_mtime = correlation_config_path.stat().st_mtime_ns
 
-graph_output_path = Path(__file__).resolve().parent / "event-graph.html"
 WEB_ALERT_URL = os.getenv("EAD_WEB_ALERT_URL", "http://127.0.0.1:8080/api/alerts")
 
 events_total = Counter(
@@ -133,197 +137,7 @@ def update_metrics(event: dict[str, Any]):
         tcp_connections_by_process.labels(comm=comm).inc()
 
 
-def is_anchor_event(_event: dict[str, Any]) -> bool:
-    return True # plug
-
-
-def logical_process_node_id(event: dict[str, Any]) -> str:
-    process = event.get("process", {})
-    return f"process:{event.get('host', 'unknown')}:{process.get('pid', 'unknown')}"
-
-
-def process_node_id(event: dict[str, Any]) -> str:
-    return event_graph.current_process_node(logical_process_node_id(event))
-
-
-def executable_name(pathname: Any) -> str:
-    name = Path(str(pathname)).name
-    return name or "<unknown>"
-
-
-def classify_operation(
-    event_type: str,
-    event_data: dict[str, Any],
-) -> tuple[str, str]:
-    raw_operation = str(event_data.get("operation", "UNKNOWN"))
-
-    if event_type == "EVENT_CLONE":
-        return "process", "CREATE"
-    if event_type == "EVENT_EXECVE":
-        return "file", "EXECUTE"
-    if event_type == "EVENT_OPENAT":
-        if event_data.get("is_create_requested") and event_data.get("success"):
-            return "file", "CREATE"
-        return "file", raw_operation
-    if event_type in {"EVENT_RENAME", "EVENT_FCHMOD", "EVENT_UNLINK"}:
-        return "file", raw_operation
-    if event_type in EVENT_FILE_PROBE:
-        return "file", raw_operation
-    if event_type == "EVENT_CONNECT":
-        return "network", raw_operation
-
-    return "unknown", raw_operation
-
-
-def add_event_to_graph(event: dict[str, Any]) -> float:
-    event_type = event.get("event_type", "unknown")
-    event_data = event.get("event", {})
-    process = event.get("process", {})
-    raw_operation = str(event_data.get("operation", "UNKNOWN"))
-    operation_entity_type, operation = classify_operation(
-        event_type,
-        event_data,
-    )
-    timestamp_ns = int(event_data.get("timestamp_ns", 0))
-
-    logical_process_id = logical_process_node_id(event)
-    event_graph.register_process_node(logical_process_id)
-    process_id = event_graph.current_process_node(logical_process_id)
-    event_graph.add_process(
-        process_id,
-        pid=process.get("pid"),
-        tid=process.get("tid"),
-        uid=process.get("uid"),
-        comm=process.get("comm", "unknown"),
-    )
-
-    edge_attributes = {
-        name: value
-        for name, value in event_data.items()
-        if name not in {"operation", "timestamp_ns"}
-    }
-    edge_attributes["source_operation"] = raw_operation
-    edge_attributes["operation_entity_type"] = operation_entity_type
-    edge_attributes["event_type"] = event_type
-
-    if operation_entity_type != "unknown":
-        base_weight = correlation_config.base_weight_for(
-            operation_entity_type,
-            operation
-        )
-        edge_attributes["base_weight"] = (base_weight)
-
-        normalized_base_weight = correlation_config.normalized_base_weight_for(
-            operation_entity_type,
-            operation,
-        )
-        edge_attributes["normalized_base_weight"] = (normalized_base_weight)
-    else:
-        edge_attributes["base_weight"] = 0.0
-        edge_attributes["normalized_base_weight"] = 0.0
-        normalized_base_weight = 0.0
-
-    if event_type == "EVENT_EXECVE" and event_data.get("success", False):
-        pathname = event_data.get("pathname", "<unknown>")
-        image_id = f"{logical_process_id}:exec:{timestamp_ns}"
-        event_graph.add_process(
-            image_id,
-            pid=process.get("pid"),
-            tid=process.get("tid"),
-            uid=process.get("uid"),
-            comm=executable_name(pathname),
-            executable=pathname,
-        )
-        event_graph.add_event(
-            process_id,
-            image_id,
-            operation,
-            timestamp_ns,
-            **edge_attributes,
-        )
-        event_graph.set_current_process_node(logical_process_id, image_id)
-
-    elif event_type == "EVENT_CONNECT":
-        address = event_data.get("dst_ip", "unknown")
-        port = event_data.get("dst_port", "unknown")
-        target_id = f"network:{address}:{port}"
-        event_graph.add_network(target_id, address=address, port=port)
-        event_graph.add_event(
-            process_id, target_id, operation, timestamp_ns, **edge_attributes
-        )
-
-    elif event_type in {"EVENT_EXECVE", "EVENT_OPENAT", "EVENT_FCHMOD", "EVENT_UNLINK"} | EVENT_FILE_PROBE:
-        pathname = event_data.get("pathname", "<unknown>")
-        target_id = f"file:{pathname}"
-        event_graph.add_file(target_id, pathname=pathname)
-        event_graph.add_event(
-            process_id, target_id, operation, timestamp_ns, **edge_attributes
-        )
-
-    elif event_type == "EVENT_RENAME":
-        oldname = event_data.get("oldname", "<unknown-old>")
-        newname = event_data.get("newname", "<unknown-new>")
-        old_id = f"file:{oldname}"
-        new_id = f"file:{newname}"
-        event_graph.add_file(old_id, pathname=oldname)
-        event_graph.add_file(new_id, pathname=newname)
-        event_graph.add_event(
-            process_id,
-            old_id,
-            "RENAME_REQUEST",
-            timestamp_ns,
-            source_operation="RENAME_REQUEST",
-            operation_entity_type="synthetic",
-            base_weight=0.0,
-            normalized_base_weight=0.0,
-            synthetic=True,
-        )
-        event_graph.add_event(
-            old_id, new_id, operation, timestamp_ns, **edge_attributes
-        )
-
-    elif event_type == "EVENT_CLONE":
-        child_pid = event_data.get("created_task_id")
-        child_id = f"process:{event.get('host', 'unknown')}:{child_pid}"
-        if child_id not in event_graph.graph:
-            event_graph.add_process(
-                child_id,
-                pid=child_pid,
-                comm="<unknown>",
-            )
-        event_graph.register_process_node(child_id)
-        event_graph.add_event(
-            process_id, child_id, operation, timestamp_ns, **edge_attributes
-        )
-
-    else:
-        target_id = f"event:{event_type}:{timestamp_ns}"
-        event_graph.graph.add_node(target_id, entity_type="event", event_type=event_type)
-        event_graph.add_event(
-            process_id, target_id, operation, timestamp_ns, **edge_attributes
-        )
-    return normalized_base_weight
-
-
-def render_graph():
-    started = time.monotonic()
-
-    visualize_graph(
-        event_graph.graph,
-        str(graph_output_path),
-    )
-
-    duration = time.monotonic() - started
-    print(
-        f"Graph rendered: "
-        f"{event_graph.graph.number_of_nodes()} nodes, "
-        f"{event_graph.graph.number_of_edges()} edges, "
-        f"duration={duration:.3f}s; "
-        f"file://{graph_output_path}"
-    )
-
-
-def handle_event(event: dict[str, Any]) -> float:
+def handle_event(event: dict[str, Any]) -> None:
     """
     {
         "timestamp":"2026-08-29T09:16:04.368074Z",
@@ -337,31 +151,34 @@ def handle_event(event: dict[str, Any]) -> float:
             "result":0,"success":true,"syscall_type":11,"timestamp_ns":"1787994964366003142","type":12}
     }
     """
+
     reload_correlation_config_if_changed()
     update_metrics(event)
 
-    event_data = event.get("event", {})
-    timestamp_ns = int(event_data.get("timestamp_ns", 0))
+    buffered_event = event_buffer.append(event)
+    reasons = anchor_reasons(event)
+    if reasons:
+        print(
+            f"Anchor event: {buffered_event.event_id}; "
+            f"reasons: {', '.join(sorted(reasons))}"
+        )
 
-    normalized_base_weight = add_event_to_graph(event)
+    search = find_related_candidates(
+        host=event["host"],
+        pid=event["process"]["pid"],
+        timestamp_ns=int(event["event"]["timestamp_ns"]),
+        event_buffer=event_buffer,
+        process_candidates=process_candidates,
+        active_candidates=active_candidates,
+    )
 
-    """
-    if is_anchor_event(event):
-        context_weight, pattern_similarity = get_context_weight(event, event_graph.graph, correlation_config)
-        print(f"Context weight: {context_weight:.6f}, pattern: {pattern_similarity}, timestamp: {timestamp_ns}")
-
-        adjusted_weight = get_adjusted_weight(context_weight, normalized_base_weight)
-        print(f"Adjusted weight: {adjusted_weight:.6f}")
-
-        if pattern_similarity > 0:
-            alerts_total.inc()
-            publish_alert(event, adjusted_weight)
-
-        return adjusted_weight
-    """
+    if search.candidate_ids:
+        ...
+    elif reasons:
+        ...
 
 
-def correlation_worker():
+def event_processor():
     dirty = False
 
     while True:
@@ -436,7 +253,7 @@ def run_agent_server():
 
 def main():
     worker = threading.Thread(
-        target=correlation_worker, daemon=True
+        target=event_processor, daemon=True
     )
     worker.start()
 
