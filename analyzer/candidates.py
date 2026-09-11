@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 from uuid import uuid4
+from typing import Any
 
 from .buffer import EventBuffer, BufferedEvent
 from .correlation_config import CorrelationConfig
@@ -33,6 +34,46 @@ class Candidate:
     # TODO: сделать идентификацию по start_time
     process_keys: set[tuple[str, int]] = field(default_factory=set)
 
+    # на каком этапе каждое событие кандидата
+    match_ids_by_event: dict[str, set[str]] = field(default_factory=dict)
+
+    # описание совпадения, что ожидаем дальше и тд
+    active_matches: dict[str, Any] = field(default_factory=dict)
+
+"""
+match_ids_by_event = {
+    "UUID event-A": {"UUID match-1"},
+    "UUID event-B": {"UUID match-1"},
+    "UUID event-C": {"UUID match-1"},
+    "UUID event-D": {"UUID match-1"},
+}
+
+active_matches = {
+    "UUID match-1": {
+        "pattern_id": "SH-1",
+        "alternative_id": "direct-runtime",
+        "next_stage_index": 4,
+        "matched_event_ids": {
+            "event-A",
+            "event-B",
+            "event-C",
+            "event-D",
+        },
+        "matched_stage_ids": {
+            "package_manager_execution",
+            "manager_reads_manifest",
+            "manager_creates_lifecycle_shell",
+            "shell_starts_runtime",
+        },
+        "bindings": {
+            "package_manager": "process:localhost:100",
+            "lifecycle_shell": "process:localhost:101",
+            "script_runtime": "process:localhost:102",
+        },
+        "score": 6.5,
+    },
+}
+"""
 
 # присмоединение события
 def attach_event(
@@ -58,6 +99,7 @@ def attach_event(
                 event,
                 correlation_config,
                 candidate.graph,
+                entry.event_id
             )
 
         candidate.events[entry.event_id] = entry
@@ -88,14 +130,17 @@ def attach_creation_chain(
     event_buffer: EventBuffer,
     correlation_config: CorrelationConfig,
     process_candidates: dict[tuple[str, int], set[str]],
-) -> None:
+) -> list[BufferedEvent]:
+    attached_entries: list[BufferedEvent] = []
     for creation in reversed(creation_chain):
         entry = event_buffer.get_event(creation.event_id)
 
         # если вышло по ttl
         if entry is None:
             continue
-
+        if entry.event_id in candidate.events:
+            continue
+        
         attach_event(
             candidate,
             entry,
@@ -103,6 +148,8 @@ def attach_creation_chain(
             correlation_config=correlation_config,
             process_candidates=process_candidates,
         )
+        attached_entries.append(entry)
+    return attached_entries
 
 
 def create_candidate(

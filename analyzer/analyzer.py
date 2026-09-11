@@ -21,6 +21,7 @@ from .buffer import EventBuffer
 from .constants import WINDOW_SIZE
 from .patterns import anchor_reasons
 from .candidates import find_related_candidates, attach_event, attach_creation_chain, create_candidate
+from .matcher import update_candidate_matches
 
 
 AGENT_HOST = "0.0.0.0"
@@ -246,13 +247,19 @@ def handle_event(event: dict[str, Any]) -> None:
                 ],
             )
 
-            attach_creation_chain(
+            restored_entries = attach_creation_chain(
                 candidate,
                 search.creation_chain,
                 event_buffer=event_buffer,
                 correlation_config=correlation_config,
                 process_candidates=process_candidates,
             )
+
+            for restored_entry in restored_entries:
+                update_candidate_matches(
+                    restored_entry,
+                    candidate,
+                )
 
             attach_event(
                 candidate,
@@ -261,6 +268,9 @@ def handle_event(event: dict[str, Any]) -> None:
                 correlation_config=correlation_config,
                 process_candidates=process_candidates,
             )
+
+            update_candidate_matches(buffered_event, candidate)
+
             publish_alert(event, 0.0, candidate_id)
             print(
                 f"Candidate updated: {candidate_id}; "

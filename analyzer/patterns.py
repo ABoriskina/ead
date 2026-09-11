@@ -1,6 +1,6 @@
 from pathlib import PurePath
 from typing import Any, Mapping
-
+from .constants import BASE_WEIGHTS, PERIODICITY
 
 # якорные события
 ENTITY_GROUPS = {
@@ -217,18 +217,192 @@ def anchor_reasons(event: Mapping[str, Any]) -> set[str]:
     return reasons
 
 
-
-
-
-
-
-
-
-
 # Для сопоставления с шаблоном
+PATTERNS = {
+    "SH-1": {
+        "description" : "Запуск lifecycle-скрипта пакетным менеджером",
+        "alternatives": [
+            {
+                "id": "direct-runtime",
+                "stages": [
+                    {
+                        "id": "manager_reads_manifest",
+                        "weight": BASE_WEIGHTS["manager_reads_manifest"],
+                        "required": True,
+                        "can_be_duplicated" : False,
+                        "source": {
+                            "role": "package_manager",
+                            "entity_type": "process",
+                            "entity_groups": ["package_manager"],
+                        },
+                        "edge": {
+                            "event_type": "EVENT_OPENAT",
+                            "operations": ["OPEN_READ"],
+                        },
+                        "target": {
+                            "role": "package_manifest",
+                            "entity_type": "file",
+                            "entity_groups": ["package_manifest"],
+                        },
+                    },
+                    {
+                        "id": "manager_creates_lifecycle_shell_child",
+                        "weight": BASE_WEIGHTS["manager_creates_lifecycle_shell_child"],
+                        "required": True,
+                        "can_be_duplicated" : False,
+                        "source": {
+                            "role": "package_manager",
+                        },
+                        "edge": {
+                            "event_type": "EVENT_CLONE",
+                            "operations": ["CREATE"],
+                        },
+                        "target": {
+                            "role": "lifecycle_child",
+                            "entity_type": "process",
+                        },
+                        "within_seconds": PERIODICITY["manager_creates_lifecycle_shell_child"],
+                    },
+                    {
+                        "id": "manager_creates_lifecycle_shell",
+                        "weight": BASE_WEIGHTS["manager_creates_lifecycle_shell"],
+                        "required": True,
+                        "can_be_duplicated" : False,
+                        "source": {
+                            "role": "lifecycle_child",
+                            "entity_type": "process",
+                        },
+                        "edge": {
+                            "event_type": "EVENT_EXECVE",
+                            "operations": ["EXECUTE"],
+                            "require_success": True,
+                        },
+                        "target": {
+                            "role": "lifecycle_shell",
+                            "entity_type": "process",
+                            "entity_groups": ["lifecycle_shell"],
+                        },
+                        "within_seconds": PERIODICITY["manager_creates_lifecycle_shell"],
+                    },
+                    {
+                        "id": "shell_starts_runtime_child",
+                        "weight": BASE_WEIGHTS["shell_starts_runtime_child"],
+                        "required": True,
+                        "can_be_duplicated" : False,
+                        "source": {
+                            "role": "lifecycle_shell",
+                        },
+                        "edge": {
+                            "event_type": "EVENT_CLONE",
+                            "operations": ["CREATE"],
+                        },
+                        "target": {
+                            "role": "runtime_child",
+                            "entity_type": "process",
+                        },
+                        "within_seconds": PERIODICITY["shell_starts_runtime_child"],
+                    },
+                    {
+                        "id": "shell_starts_runtime",
+                        "weight": BASE_WEIGHTS["shell_starts_runtime"],
+                        "required": True,
+                        "can_be_duplicated" : False,
+                        "source": {
+                            "role": "runtime_child",
+                            "entity_type": "process",
+                        },
+                        "edge": {
+                            "event_type": "EVENT_EXECVE",
+                            "operations": ["EXECUTE"],
+                            "require_success": True,
+                        },
+                        "target": {
+                            "role": "script_runtime",
+                            "entity_type": "process",
+                            "entity_groups": ["script_runtime"],
+                        },
+                        "within_seconds": PERIODICITY["shell_starts_runtime"],
+                    },
+                    {
+                        "id": "runtime_reads_install_script",
+                        "weight": BASE_WEIGHTS["runtime_reads_install_script"],
+                        "required": True,
+                        "can_be_duplicated" : False,
+                        "source": {
+                            "role": "script_runtime",
+                        },
+                        "edge": {
+                            "event_type": "EVENT_OPENAT",
+                            "operations": ["OPEN_READ"],
+                        },
+                        "target": {
+                            "role": "install_script",
+                            "entity_type": "file",
+                            "entity_groups": ["install_script"],
+                        },
+                        "within_seconds": PERIODICITY["runtime_reads_install_script"],
+                    },
+                ],
+            },
+        ],
+    },
+
+    "SH-2": {
+    "description": "",
+    "alternatives": [],
+    },
+    "SH-3": {
+        "description": "",
+        "alternatives": [],
+    },
+    "SH-4": {
+        "description": "",
+        "alternatives": [],
+    },
+    "SH-5": {
+        "description": "",
+        "alternatives": [],
+    },
+    "SH-6": {
+        "description": "",
+        "alternatives": [],
+    },
+    "SH-7": {
+        "description": "",
+        "alternatives": [],
+    },
+}
+
+
+STAGE_INDEX = {
+    (pattern_id, alternative["id"], stage["id"]): stage
+    for pattern_id, pattern in PATTERNS.items()
+    for alternative in pattern["alternatives"]
+    for stage in alternative["stages"]
+}
+
+
+"""
+  process:localhost:171699 --[EVENT_EXECVE / EXECUTE / ts=1789120947437474603]--> process:localhost:171699:exec:1789120947437474603
+  process:localhost:171699:exec:1789120947437474603 --[EVENT_OPENAT / OPEN_READ / ts=1789120947438646318]--> file:/usr/lib/locale/locale-archive
+    
+    graph = candidate.graph.graph
+    print("\nGRAPH EDGES:")
+    for source, target, key, attributes in graph.edges(
+        keys=True,
+        data=True,
+    ):
+        print(
+            f"  {source} "
+            f"--[{attributes.get('event_type')} / "
+            f"{attributes.get('operation')} / "
+            f"ts={attributes.get('timestamp_ns')}]--> "
+            f"{target}"
+        )
+"""
+
 
 shai_hulud_20 = {
-    # установка вредоносного пакета
     "SH-1": {
         "alternatives": [
             [
@@ -322,7 +496,7 @@ def _pattern_variants(pattern_name: str) -> list[list[list[str]]]:
     return [pattern]
 
 
-def check_in_patterns(
+def check_in_patterns_klopik(
     source: Mapping[str, Any],
     target: Mapping[str, Any],
     key: int,

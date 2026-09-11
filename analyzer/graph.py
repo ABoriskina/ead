@@ -171,7 +171,7 @@ def render_graph(event_graph: EventGraph):
 
 
 def add_event_to_graph(event: dict[str, Any], correlation_config: CorrelationConfig, 
-                       event_graph: EventGraph,) -> float:
+                       event_graph: EventGraph, event_id: str) -> float:
     event_type = event.get("event_type", "unknown")
     event_data = event.get("event", {})
     process = event.get("process", {})
@@ -201,6 +201,7 @@ def add_event_to_graph(event: dict[str, Any], correlation_config: CorrelationCon
     edge_attributes["source_operation"] = raw_operation
     edge_attributes["operation_entity_type"] = operation_entity_type
     edge_attributes["event_type"] = event_type
+    edge_attributes["event_id"] = event_id
 
     if operation_entity_type != "unknown":
         base_weight = correlation_config.base_weight_for(

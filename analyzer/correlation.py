@@ -2,7 +2,7 @@ from typing import Any
 import networkx as nx
 from .correlation_config import CorrelationConfig
 from .graph import get_subgraph
-from .patterns import check_in_patterns, pattern_variant_lengths
+from .patterns import  pattern_variant_lengths
 
 
 NANOSECONDS_IN_SECOND = 1_000_000_000
@@ -145,7 +145,7 @@ def get_pattern_similarity(
             step = variant_steps[variant_index]
             if step >= variant_length:
                 continue
-            if not check_in_patterns(
+            """if not check_in_patterns(
                 graph.nodes[source],
                 graph.nodes[target],
                 key,
@@ -154,7 +154,7 @@ def get_pattern_similarity(
                 pattern_name,
                 variant_index,
             ):
-                continue
+                continue"""
 
             variant_steps[variant_index] += 1
             if (
