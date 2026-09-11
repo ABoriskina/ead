@@ -20,7 +20,7 @@ from .graph import render_graph
 from .buffer import EventBuffer
 from .constants import WINDOW_SIZE
 from .patterns import anchor_reasons
-from .candidates import find_related_candidates
+from .candidates import find_related_candidates, attach_event, attach_creation_chain, create_candidate
 
 
 AGENT_HOST = "0.0.0.0"
@@ -97,9 +97,10 @@ def reload_correlation_config_if_changed():
     print(f"Reloaded correlation config: {config_path}")
 
 
-def publish_alert(event: dict[str, Any], score: float):
+def publish_alert(event: dict[str, Any], score: float, candidate_id: Any):
+    alerts_total.inc()
     try:
-        alert_queue.put_nowait({"score": score, "event": event})
+        alert_queue.put_nowait({"candidate": candidate_id, "score": score, "event": event})
     except queue.Full:
         print("Web alert queue is full, alert dropped")
 
@@ -137,6 +138,53 @@ def update_metrics(event: dict[str, Any]):
         tcp_connections_by_process.labels(comm=comm).inc()
 
 
+def print_candidate_debug(candidate, label: str) -> None:
+    graph = candidate.graph.graph
+
+    print()
+    print("=" * 70)
+    print(f"CANDIDATE DEBUG: {label}")
+    print(f"candidate_id: {candidate.candidate_id}")
+    print(f"host: {candidate.host}")
+    print(f"initial_search_stop: {candidate.initial_search_stop}")
+    print(f"known process keys: {sorted(candidate.process_keys)}")
+    print(f"attached events: {len(candidate.events)}")
+    print(f"graph nodes: {graph.number_of_nodes()}")
+    print(f"graph edges: {graph.number_of_edges()}")
+
+    print("\nATTACHED EVENTS:")
+    for event_id, entry in candidate.events.items():
+        event = entry.payload
+        event_data = event["event"]
+        process = event["process"]
+
+        print(
+            f"  id={event_id} "
+            f"type={event['event_type']} "
+            f"pid={process['pid']} "
+            f"comm={process.get('comm', '<unknown>')} "
+            f"ts={event_data.get('timestamp_ns')} "
+            f"path={event_data.get('pathname', '')} "
+            f"child_pid={event_data.get('created_task_id', '')}"
+        )
+
+    print("\nGRAPH EDGES:")
+    for source, target, key, attributes in graph.edges(
+        keys=True,
+        data=True,
+    ):
+        print(
+            f"  {source} "
+            f"--[{attributes.get('event_type')} / "
+            f"{attributes.get('operation')} / "
+            f"ts={attributes.get('timestamp_ns')}]--> "
+            f"{target}"
+        )
+
+    print("=" * 70)
+    print()
+
+
 def handle_event(event: dict[str, Any]) -> None:
     """
     {
@@ -156,11 +204,21 @@ def handle_event(event: dict[str, Any]) -> None:
     update_metrics(event)
 
     buffered_event = event_buffer.append(event)
+    print(
+        f"RECEIVED: id={buffered_event.event_id} "
+        f"type={event['event_type']} "
+        f"pid={event['process']['pid']} "
+        f"comm={event['process'].get('comm', '<unknown>')} "
+        f"ts={event['event'].get('timestamp_ns')} "
+        f"path={event['event'].get('pathname', '')} "
+        f"child_pid={event['event'].get('created_task_id', '')}"
+    )
+    
     reasons = anchor_reasons(event)
     if reasons:
         print(
-            f"Anchor event: {buffered_event.event_id}; "
-            f"reasons: {', '.join(sorted(reasons))}"
+            f"\n\n!!!!!!!!!!!!!!!\nAnchor event: {buffered_event.event_id}; "
+            f"reasons: {', '.join(sorted(reasons))} \n!!!!!!!!!!!!!!!\n\n"
         )
 
     search = find_related_candidates(
@@ -173,9 +231,64 @@ def handle_event(event: dict[str, Any]) -> None:
     )
 
     if search.candidate_ids:
-        ...
+        for candidate_id in search.candidate_ids:
+            candidate = active_candidates[candidate_id]
+
+            print(
+                "CREATION CHAIN:",
+                [
+                    (
+                        creation.creator_pid,
+                        creation.child_pid,
+                        creation.event_id,
+                    )
+                    for creation in search.creation_chain
+                ],
+            )
+
+            attach_creation_chain(
+                candidate,
+                search.creation_chain,
+                event_buffer=event_buffer,
+                correlation_config=correlation_config,
+                process_candidates=process_candidates,
+            )
+
+            attach_event(
+                candidate,
+                buffered_event,
+                reasons=reasons,
+                correlation_config=correlation_config,
+                process_candidates=process_candidates,
+            )
+            publish_alert(event, 0.0, candidate_id)
+            print(
+                f"Candidate updated: {candidate_id}; "
+                f"event_id={buffered_event.event_id}; "
+                f"type={event['event_type']}; "
+                f"pid={event['process']['pid']}; "
+                f"path={event['event'].get('pathname', '')}; "
+                f"search={search.stop_reason}"
+            )
+            print_candidate_debug(
+                candidate,
+                label=f"updated by {buffered_event.event_id}",
+            )
     elif reasons:
-        ...
+        candidate = create_candidate(
+            buffered_event,
+            reasons=reasons,
+            search_stop=search.stop_reason,
+            correlation_config=correlation_config,
+            active_candidates=active_candidates,
+            process_candidates=process_candidates,
+        )
+        publish_alert(event, 0.0, candidate.candidate_id)
+        print(f"Candidate created: {candidate.candidate_id}")
+        print_candidate_debug(
+            candidate,
+            label=f"created by anchor {buffered_event.event_id}",
+        )
 
 
 def event_processor():
@@ -187,12 +300,13 @@ def event_processor():
         try:
             if item is None:
                 if dirty:
-                    render_graph()
+                    ...
+                    # render_graph()
                 return
 
             if item is FLUSH_GRAPH:
                 if dirty:
-                    render_graph()
+                    # render_graph()
                     dirty = False
                 continue
 

@@ -108,6 +108,13 @@ ANCHOR_RULES = (
         "entity_groups": frozenset({"secret_scanner"}),
         "require_success": True,
     },
+        {
+        "reason": "scheduled_activity",
+        "event_group": "PROCESS_EXECUTION",
+        "entity_role": "executed_process",
+        "entity_groups": frozenset({"scheduler"}),
+        "require_success": False,
+    },
 )
 
 

@@ -76,6 +76,15 @@ class EventBuffer:
         self._evict_expired(monotonic())
         return iter(self._events)
 
+    def get_event(self, event_id: str) -> BufferedEvent | None:
+        self._evict_expired(monotonic())
+
+        for entry in self._events:
+            if entry.event_id == event_id:
+                return entry
+
+        return None
+
     def __len__(self) -> int:
         self._evict_expired(monotonic())
         return len(self._events)

@@ -111,14 +111,12 @@ class EventGraph:
         )
 
 
-event_graph = EventGraph()
-
 def logical_process_node_id(event: dict[str, Any]) -> str:
     process = event.get("process", {})
     return f"process:{event.get('host', 'unknown')}:{process.get('pid', 'unknown')}"
 
 
-def process_node_id(event: dict[str, Any]) -> str:
+def process_node_id(event: dict[str, Any], event_graph: EventGraph,) -> str:
     return event_graph.current_process_node(logical_process_node_id(event))
 
 
@@ -153,7 +151,7 @@ def classify_operation(
 
 
 
-def render_graph():
+def render_graph(event_graph: EventGraph):
     graph_output_path = Path(__file__).resolve().parent / "event-graph.html"
     started = time.monotonic()
 
@@ -172,7 +170,8 @@ def render_graph():
     )
 
 
-def add_event_to_graph(event: dict[str, Any], correlation_config: CorrelationConfig) -> float:
+def add_event_to_graph(event: dict[str, Any], correlation_config: CorrelationConfig, 
+                       event_graph: EventGraph,) -> float:
     event_type = event.get("event_type", "unknown")
     event_data = event.get("event", {})
     process = event.get("process", {})
@@ -249,7 +248,7 @@ def add_event_to_graph(event: dict[str, Any], correlation_config: CorrelationCon
             process_id, target_id, operation, timestamp_ns, **edge_attributes
         )
 
-    elif event_type in {"EVENT_EXECVE", "EVENT_OPENAT", "EVENT_FCHMOD", "EVENT_UNLINK"} | EVENT_GROUPS["EVENT_FILE_PROBE"]:
+    elif event_type in {"EVENT_EXECVE", "EVENT_OPENAT", "EVENT_FCHMOD", "EVENT_UNLINK"} | EVENT_GROUPS["FILE_PROBE"]:
         pathname = event_data.get("pathname", "<unknown>")
         target_id = f"file:{pathname}"
         event_graph.add_file(target_id, pathname=pathname)
@@ -299,4 +298,5 @@ def add_event_to_graph(event: dict[str, Any], correlation_config: CorrelationCon
         event_graph.add_event(
             process_id, target_id, operation, timestamp_ns, **edge_attributes
         )
+    render_graph(event_graph)
     return normalized_base_weight
