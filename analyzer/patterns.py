@@ -6,6 +6,7 @@ from .constants import BASE_WEIGHTS, PERIODICITY
 ENTITY_GROUPS = {
     "process" : {
         "package_manager" : ["npm", "npx", "yarn", "pnpm", "bun", "bpm"],
+        "package_manager_runtime" : ["node"],
         "lifecycle_shell": ["sh", "dash", "bash"],
         "script_runtime": ["node", "bun", "deno", "bode"],
         "shell": ["sh", "dash", "bash", "zsh"],
@@ -49,7 +50,7 @@ ENTITY_GROUPS = {
                 ".env.test",
             ],
         },
-        "install_script": ["setup_bun.js", "payload.bjs"],
+        "install_script": ["setup_bun.js", "payload.bjs", "postinstall.js"],
         "bun_install_dir": ["bun-dist"],
         "runtime_archive": ["bun.zip", "bun.tar.gz"],
         "runtime_binary": {"basename": ["bun"], "path_component": ["bun-dist"]},
@@ -226,14 +227,54 @@ PATTERNS = {
                 "id": "direct-runtime",
                 "stages": [
                     {
+                        "id": "package_manager_execution",
+                        "weight": BASE_WEIGHTS["package_manager_execution"],
+                        "required": True,
+                        "can_be_duplicated": False,
+                        "source": {
+                            "role": "launcher",
+                            "entity_type": "process",
+                        },
+                        "edge": {
+                            "event_type": "EVENT_EXECVE",
+                            "operations": ["EXECUTE"],
+                            "require_success": True,
+                        },
+                        "target": {
+                            "role": "package_manager",
+                            "entity_type": "process",
+                            "entity_groups": ["package_manager"],
+                        },
+                    },
+                    {
+                        "id": "node_execution",
+                        "weight": BASE_WEIGHTS["node_execution"],
+                        "required": True,
+                        "can_be_duplicated": False,
+                        "source": {
+                            "role": "package_manager",
+                            "entity_type": "process",
+                        },
+                        "edge": {
+                            "event_type": "EVENT_EXECVE",
+                            "operations": ["EXECUTE"],
+                            "require_success": True,
+                        },
+                        "target": {
+                            "role": "package_manager_runtime",
+                            "entity_type": "process",
+                            "entity_groups": ["package_manager_runtime"],
+                        },
+                    },
+                    {
                         "id": "manager_reads_manifest",
                         "weight": BASE_WEIGHTS["manager_reads_manifest"],
                         "required": True,
                         "can_be_duplicated" : False,
                         "source": {
-                            "role": "package_manager",
+                            "role": "package_manager_runtime",
                             "entity_type": "process",
-                            "entity_groups": ["package_manager"],
+                            "entity_groups": ["package_manager_runtime"],
                         },
                         "edge": {
                             "event_type": "EVENT_OPENAT",
@@ -251,7 +292,7 @@ PATTERNS = {
                         "required": True,
                         "can_be_duplicated" : False,
                         "source": {
-                            "role": "package_manager",
+                            "role": "package_manager_runtime",
                         },
                         "edge": {
                             "event_type": "EVENT_CLONE",

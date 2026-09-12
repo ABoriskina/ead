@@ -1,0 +1,11 @@
+{
+    "chmod": true,
+    "clone": true,
+    "execve": true,
+    "lsm_file_open": true,
+    "open": true,
+    "rename": true,
+    "stat": true,
+    "tcp": true,
+    "unlink": true
+}

@@ -3,6 +3,8 @@ WINDOW_SIZE = 600.0
 DEPTH=20
 
 BASE_WEIGHTS = {
+    "package_manager_execution" : 1.0,
+    "node_execution" : 2.0,
     "manager_reads_manifest" : 1.0,
     "manager_creates_lifecycle_shell_child" : 1.0,
     "manager_creates_lifecycle_shell" : 2.0,
@@ -12,6 +14,8 @@ BASE_WEIGHTS = {
 }
 
 PERIODICITY = {
+    "package_manager_execution" : 1.0,
+    "node_execution":60.0,
     "manager_reads_manifest" : 0.0,
     "manager_creates_lifecycle_shell_child" : 30.0,
     "manager_creates_lifecycle_shell" : 30.0,

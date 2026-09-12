@@ -185,13 +185,30 @@ def add_event_to_graph(event: dict[str, Any], correlation_config: CorrelationCon
     logical_process_id = logical_process_node_id(event)
     event_graph.register_process_node(logical_process_id)
     process_id = event_graph.current_process_node(logical_process_id)
-    event_graph.add_process(
-        process_id,
-        pid=process.get("pid"),
-        tid=process.get("tid"),
-        uid=process.get("uid"),
-        comm=process.get("comm", "unknown"),
-    )
+    
+    process_pid = process.get("pid")
+    process_tid = process.get("tid")
+    process_comm = process.get("comm", "unknown")
+
+    if process_id not in event_graph.graph:
+        event_graph.add_process(
+            process_id,
+            pid=process_pid,
+            uid=process.get("uid"),
+            comm=process_comm,
+        )
+
+    elif (
+        event_graph.graph.nodes[process_id].get("comm") == "<unknown>"
+        and process_pid == process_tid
+    ):
+        # первое событие главного потока даёт достаточно надёжное имя
+        event_graph.add_process(
+            process_id,
+            pid=process_pid,
+            uid=process.get("uid"),
+            comm=process_comm,
+        )
 
     edge_attributes = {
         name: value
@@ -202,6 +219,10 @@ def add_event_to_graph(event: dict[str, Any], correlation_config: CorrelationCon
     edge_attributes["operation_entity_type"] = operation_entity_type
     edge_attributes["event_type"] = event_type
     edge_attributes["event_id"] = event_id
+    edge_attributes["actor_pid"] = process.get("pid")
+    edge_attributes["actor_tid"] = process.get("tid")
+    edge_attributes["actor_uid"] = process.get("uid")
+    edge_attributes["actor_comm"] = process.get("comm", "unknown")
 
     if operation_entity_type != "unknown":
         base_weight = correlation_config.base_weight_for(
@@ -226,7 +247,6 @@ def add_event_to_graph(event: dict[str, Any], correlation_config: CorrelationCon
         event_graph.add_process(
             image_id,
             pid=process.get("pid"),
-            tid=process.get("tid"),
             uid=process.get("uid"),
             comm=executable_name(pathname),
             executable=pathname,

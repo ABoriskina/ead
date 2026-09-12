@@ -110,7 +110,7 @@ def alert_publisher():
     while True:
         alert = alert_queue.get()
         try:
-            payload = json.dumps(alert).encode("utf-8")
+            payload = json.dumps(alert, default=str).encode("utf-8")
             http_request = request.Request(
                 WEB_ALERT_URL,
                 data=payload,
@@ -200,6 +200,8 @@ def handle_event(event: dict[str, Any]) -> None:
             "result":0,"success":true,"syscall_type":11,"timestamp_ns":"1787994964366003142","type":12}
     }
     """
+    candidate = None
+    completed = False
 
     reload_correlation_config_if_changed()
     update_metrics(event)
@@ -256,7 +258,7 @@ def handle_event(event: dict[str, Any]) -> None:
             )
 
             for restored_entry in restored_entries:
-                update_candidate_matches(
+                completed = update_candidate_matches(
                     restored_entry,
                     candidate,
                 )
@@ -269,9 +271,7 @@ def handle_event(event: dict[str, Any]) -> None:
                 process_candidates=process_candidates,
             )
 
-            update_candidate_matches(buffered_event, candidate)
-
-            publish_alert(event, 0.0, candidate_id)
+            completed = update_candidate_matches(buffered_event, candidate)
             print(
                 f"Candidate updated: {candidate_id}; "
                 f"event_id={buffered_event.event_id}; "
@@ -293,12 +293,38 @@ def handle_event(event: dict[str, Any]) -> None:
             active_candidates=active_candidates,
             process_candidates=process_candidates,
         )
-        publish_alert(event, 0.0, candidate.candidate_id)
+
+        completed = update_candidate_matches(buffered_event, candidate)
+
         print(f"Candidate created: {candidate.candidate_id}")
         print_candidate_debug(
             candidate,
             label=f"created by anchor {buffered_event.event_id}",
         )
+
+    if completed and candidate is not None:
+        alert_event = {
+            "candidate_id": str(candidate.candidate_id),
+            "host": candidate.host,  # не candidate.candidate_host
+            "events_total": len(candidate.events),
+            "events": [],
+        }
+
+        for event_id, entry in candidate.events.items():
+            event = entry.payload
+            event_data = event.get("event", {})
+            process = event.get("process", {})
+
+            alert_event["events"].append({
+                "id": event_id,
+                "type": event.get("event_type"),
+                "pid": process.get("pid"),
+                "comm": process.get("comm", "<unknown>"),
+                "ts": event_data.get("timestamp_ns"),
+                "path": event_data.get("pathname", ""),
+            })
+
+        publish_alert(alert_event, 0.0, str(candidate.candidate_id))
 
 
 def event_processor():

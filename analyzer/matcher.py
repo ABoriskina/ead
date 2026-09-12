@@ -1,3 +1,4 @@
+from copy import deepcopy
 from uuid import uuid4
 
 from .candidates import Candidate
@@ -91,9 +92,23 @@ def edge_matches_stage(
         return False
 
     if not node_matches(graph.nodes[source_id], source_condition):
+        print(
+            "STAGE REJECTED: source node does not match",
+            "\nstage:", stage["id"],
+            "\nsource_id:", source_id,
+            "\nsource_attributes:", graph.nodes[source_id],
+            "\nexpected_source:", source_condition,
+        )
         return False
 
     if not node_matches(graph.nodes[target_id], target_condition):
+        print(
+            "STAGE REJECTED: target node does not match",
+            "\nstage:", stage["id"],
+            "\ntarget_id:", target_id,
+            "\ntarget_attributes:", graph.nodes[target_id],
+            "\nexpected_target:", target_condition,
+        )
         return False
 
     within_seconds = stage.get("within_seconds")
@@ -157,11 +172,11 @@ def bind_stage_roles(
 def update_candidate_matches(
     buffered_event: BufferedEvent,
     candidate: Candidate,
-) -> None:
-    print(f"\n\n CANDIDATES WEEEEEEEHOOOOOO\n{candidate.match_ids_by_event}\n")
+) -> Candidate:
+    
     event_id = buffered_event.event_id
     graph_edges = edges_for_event(candidate, event_id)
-
+    is_completed = False
     if not graph_edges:
         return
 
@@ -195,27 +210,35 @@ def update_candidate_matches(
             ):
                 continue
 
-            match["bindings"] = bind_stage_roles(
-                match["bindings"],
+            next_match = deepcopy(match)
+            next_match_id = uuid4().hex
+
+            next_match["bindings"] = bind_stage_roles(
+                next_match["bindings"],
                 next_stage,
                 source_id,
                 target_id,
             )
-            match["next_stage_index"] += 1
-            match["last_timestamp_ns"] = int(
+            next_match["next_stage_index"] += 1
+            next_match["last_timestamp_ns"] = int(
                 edge_attributes["timestamp_ns"]
             )
-            match["matched_event_ids"].add(event_id)
-            match["matched_stage_ids"].add(next_stage["id"])
-            match["score"] += next_stage["weight"]
+            next_match["matched_event_ids"].add(event_id)
+            next_match["matched_stage_ids"].add(next_stage["id"])
+            next_match["score"] += next_stage["weight"]
+
+            candidate.active_matches[next_match_id] = next_match
 
             candidate.match_ids_by_event.setdefault(
                 event_id,
                 set(),
-            ).add(match_id)
+            ).add(next_match_id)
 
+            if next_match["next_stage_index"] == len(alternative["stages"]):
+                next_match["status"] = "COMPLETED"
+                print(f"\n\n\n\n\n\n COMPLETED \n\n\n\n\n\n")
+                is_completed = True
             # TODO: сделаит расчет calculate_candidate_score()
-            break
 
     # всегда проверяем может ли новое событие начать
     # новый match с первого этапа любой альтернативы
@@ -262,3 +285,8 @@ def update_candidate_matches(
                     event_id,
                     set(),
                 ).add(match_id)
+    print(f"\n\n CANDIDATES WEEEEEEEHOOOOOO\n{candidate.match_ids_by_event}\n{candidate.active_matches}\n")
+    if (is_completed):
+        return candidate
+    else:
+        return None
